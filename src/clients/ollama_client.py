@@ -1,8 +1,6 @@
 import json
-import requests
 import httpx
-import asyncio
-from typing import Any, AsyncIterator, Optional, Dict, List
+from typing import Any, AsyncGenerator, Optional, Dict, List
 
 from utils.stream_util import StreamContext
 
@@ -88,7 +86,7 @@ class OllamaClient:
         max_tokens: int = 200,
         temperature: float = 0.2,
         timeout: Optional[float] = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncGenerator[str, None]:
         """
         Асинхронный поток генерации.
         Возвращает куски текста по мере генерации.
