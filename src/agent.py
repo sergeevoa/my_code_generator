@@ -1,4 +1,6 @@
 import json
+import re
+import ast
 import sys
 import chardet
 from pathlib import Path
@@ -21,6 +23,7 @@ Description:
 Write content to a file at the given path.
 Creates the file if it does not exist.
 Can overwrite or append to existing content.
+If User's message contains words "create file" or "создай файл" you MUST execute this tool.
 Input (JSON):
 {
   "path": "string",
@@ -83,8 +86,8 @@ You are responsible for deciding when a tool is required.
 
 ---------------------------------------
 LANGUAGE POLICY (must follow exactly):
-- If the user's message is in Russian, reply ONLY in Russian.
-- If the user's message is in English, reply ONLY in English.
+- If the user's message contains Russian words, reply ONLY in Russian.
+- If the user's message is fully in English, reply ONLY in English.
 - Under NO CIRCUMSTANCES reply in Chinese or any other language.
 - If you cannot determine whether the user wrote in Russian or English, reply in English.
 - If you are calling tools, keep the tool-call JSON in the same language format as the user's request (Russian -> Russian, English -> English).
@@ -195,19 +198,93 @@ def ensure_system_in_history(history: List[Dict[str, str]]) -> None:
         # но если первый элемент не system — добавим system в начало
         history.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
 
-def find_tool_calls_from_text(text: str):
+# Находит все сегменты {...} с балансом фигурных скобок (включая вложенные)
+def extract_brace_objects(text: str) -> List[str]:
+    objs = []
+    start = None
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    objs.append(text[start:i+1])
+                    start = None
+    return objs
+
+# Заменить тройные кавычки ("""...""" или '''...''') на валидную JSON-строку
+TRIPLE_RE = re.compile(r'(""".*?"""|\'\'\'.*?\'\'\')', flags=re.S)
+
+def replace_triple_quotes_with_json_string(s: str) -> str:
+    def repl(m):
+        block = m.group(0)
+        # убираем внешние тройные кавычки
+        inner = block[3:-3]
+        # json.dumps вернёт валидную JSON-строку с экранированием
+        return json.dumps(inner)
+    return TRIPLE_RE.sub(repl, s)
+
+def try_parse_candidate(s: str) -> Any:
+    # 1) чистый json
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    # 2) если есть тройные кавычки, попытаемся заменить их на валидные JSON-строки
+    if '"""' in s or "'''" in s:
+        try:
+            sanitized = replace_triple_quotes_with_json_string(s)
+            return json.loads(sanitized)
+        except Exception:
+            pass
+
+    # 3) пробуем ast.literal_eval (для Python-литералов, одинарных кавычек и т.д.)
+    try:
+        obj = ast.literal_eval(s)
+        return obj
+    except Exception:
+        pass
+
+    # ничего не помогло
+    return None
+
+def find_tool_calls_from_text(text: str) -> List[Dict[str, Any]]:
     if not text:
         return []
-    s = text.strip()
-    try:
-        obj = json.loads(s)
-    except json.JSONDecodeError:
-        return []
-    if isinstance(obj, dict) and "tool" in obj and "input" in obj:
-        return [obj]
-    if isinstance(obj, list):
-        return [it for it in obj if isinstance(it, dict) and "tool" in it and "input" in it]
-    return []
+
+    # 1) сначала — поддержка явных тегов, если вы их используете
+    calls = []
+    tag_re = re.compile(r'<TOOL_CALL>(.*?)</TOOL_CALL>', flags=re.S)
+    for m in tag_re.findall(text):
+        # m — содержимое тега (может быть JSON/Python literal)
+        cand = m.strip()
+        parsed = try_parse_candidate(cand)
+        if isinstance(parsed, dict) and "tool" in parsed and "input" in parsed:
+            calls.append(parsed)
+        elif isinstance(parsed, list):
+            for it in parsed:
+                if isinstance(it, dict) and "tool" in it and "input" in it:
+                    calls.append(it)
+    if calls:
+        return calls
+
+    # 2) если тегов нет — извлекаем все сбалансированные {...} блоки и пытаемся парсить их
+    candidates = extract_brace_objects(text)
+    for cand in candidates:
+        parsed = try_parse_candidate(cand)
+        if isinstance(parsed, dict) and "tool" in parsed and "input" in parsed:
+            calls.append(parsed)
+        elif isinstance(parsed, list):
+            for it in parsed:
+                if isinstance(it, dict) and "tool" in it and "input" in it:
+                    calls.append(it)
+
+    return calls
 
 async def run_agent_async(
         client, 
