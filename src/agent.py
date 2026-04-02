@@ -24,6 +24,8 @@ Write content to a file at the given path.
 Creates the file if it does not exist.
 Can overwrite or append to existing content.
 If User's message contains words "create file" or "создай файл" you MUST execute this tool.
+If User's message contains words "add", "допиши", "измени", "добавь", "create" and file at the given path already exist, you MUST use this tool in "a" mode
+When you use this tool in "a" mode, you CAN'T change code that exist in the file UNLESS it's nessesary for new code perfomance.
 Input (JSON):
 {
   "path": "string",
