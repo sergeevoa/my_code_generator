@@ -1,8 +1,6 @@
 import asyncio
 import json
 from dataclasses import dataclass
-import sys
-import traceback
 from typing import Any, AsyncIterator, Dict, List, Optional, Protocol
 
 import httpx
