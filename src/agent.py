@@ -6,6 +6,8 @@ import chardet
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from sandbox.executor import execute_python as _sandbox_execute
+
 SYSTEM_PROMPT = """You are a coding assistant that can read, write, and manage files.
 
 You have access to the following tools:
@@ -39,6 +41,16 @@ List files in the specified directory.
 Input (JSON):
 {
   "path": "string", // optional, default is "."
+}
+
+4) execute_python
+Description:
+Execute a Python code snippet in a safe sandbox and return the output.
+Use this to test generated code, verify logic, run calculations, or check for runtime errors.
+The sandbox blocks dangerous operations (file I/O, network, subprocesses, eval/exec).
+Input (JSON):
+{
+  "code": "string"  // Python code to execute
 }
 
 ----------------------------------------
@@ -184,6 +196,10 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
             return write_file(tool_input["path"], tool_input["content"], tool_input.get("mode", "w"))
         elif tool_name == "list_files":
             return list_files(tool_input.get("path", "."))
+        elif tool_name == "execute_python":
+            success, output = _sandbox_execute(tool_input["code"])
+            status = "OK" if success else "ERROR"
+            return f"[{status}]\n{output}"
         else:
             return f"Error: Unknown tool: {tool_name}"
     except Exception as e:
