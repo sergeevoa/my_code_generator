@@ -14,3 +14,6 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+# Generation aritifacts
+gen_artifacts/
