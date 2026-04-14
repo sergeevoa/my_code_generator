@@ -1,12 +1,17 @@
 import asyncio
 import sys
+import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from clients.ollama_client import OllamaClient
 from agent import run_agent_async
 
-MODEL = "deepseek-coder:6.7b"
-    
-HOST = "http://localhost:11434"
+# Загружаем переменные из .env (ищем от корня проекта)
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+HOST  = os.getenv("OLLAMA_HOST",  "http://localhost:11434")
 
 def print_banner():
     print("=" * 60)
