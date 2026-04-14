@@ -2,18 +2,17 @@ import json
 import httpx
 from typing import Any, AsyncGenerator, Optional, Dict, List
 
-from utils.stream_util import StreamContext
-
 class OllamaClient:
     """
     Асинхронный клиент для взаимодействия с Ollama LLM сервером.
     """
 
-    def __init__(self, model: str, host: str = "http://localhost:11434", default_timeout: Optional[float] = 60.0):
+    def __init__(self, model: str, host: str = "http://localhost:11434", default_timeout: Optional[float] = 300.0):
         self.model = model
         self.host = host.rstrip("/")
         self.api_url = f"{self.host}/api/generate"
         self.default_timeout = default_timeout
+
 
     def _create_prompt(self, messages: list[dict]) -> str:
         """
@@ -52,9 +51,11 @@ class OllamaClient:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
             "stream": False,
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+            },
         }
         timeout = self.default_timeout if timeout is None else timeout
 
@@ -96,9 +97,11 @@ class OllamaClient:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
             "stream": True,
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+            },
         }
 
         async with httpx.AsyncClient(timeout=timeout) as client:
