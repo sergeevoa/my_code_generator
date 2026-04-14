@@ -7,6 +7,7 @@ import time
 import chardet
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from system_prompt import SYSTEM_PROMPT
 
 MAX_REACT_STEPS = 6
 
