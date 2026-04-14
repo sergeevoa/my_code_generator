@@ -15,5 +15,8 @@ venv/
 .vscode/
 .idea/
 
+# Agent tasks
+tasks/
+
 # Generation aritifacts
 gen_artifacts/
