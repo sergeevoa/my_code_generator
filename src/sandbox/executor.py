@@ -1,80 +1,99 @@
 """
-Слой 2 песочницы: изолированное выполнение кода в отдельном subprocess.
+Docker-sandbox: безопасное выполнение Python-кода в изолированном контейнере.
 
-Защитные меры:
-  - Код пишется во временный файл и запускается как отдельный процесс.
-  - Окружение (env) сведено к минимуму: только PATH + системные переменные Windows.
-  - Жёсткий таймаут: процесс убивается через TIMEOUT_SECONDS секунд.
-  - Вывод обрезается до MAX_OUTPUT_CHARS символов.
-  - Временный файл удаляется всегда, даже при ошибке.
+Код передаётся в контейнер через stdin — никаких временных файлов,
+никаких volume-монтирований. Контейнер уничтожается сразу после завершения.
 
-Перед запуском код проходит статический анализ (validator.py).
+Двухуровневая защита:
+  1. AST-валидация (validator.py) — отклоняет опасный код до запуска контейнера.
+  2. Docker-изоляция:
+       --network=none        → нет сети
+       --memory / --cpus     → лимиты ресурсов (cgroups)
+       --pids-limit          → защита от fork bomb
+       --read-only           → файловая система только для чтения
+       --tmpfs=/tmp          → единственное место для записи, noexec
+       --user=nobody         → непривилегированный пользователь
+       --cap-drop=ALL        → убраны все Linux capabilities
+       --security-opt        → нельзя поднять привилегии (setuid/setgid)
 """
-import os
-import sys
 import subprocess
-import tempfile
 from typing import Tuple
 
 from sandbox.validator import validate_code
 
 # ── Настройки ──────────────────────────────────────────────────────────────
-TIMEOUT_SECONDS: int   = 10       # максимальное время выполнения (секунд)
-MAX_OUTPUT_CHARS: int  = 10_000   # максимальный размер возвращаемого вывода
+DOCKER_IMAGE          = "code-sandbox:latest"  
+TIMEOUT_SECONDS: int  = 10    # лимит выполнения кода внутри контейнера
+STARTUP_OVERHEAD: int = 15    # запас на старт Docker-контейнера
+MAX_OUTPUT_CHARS: int = 10_000
 
 
 def execute_python(code: str) -> Tuple[bool, str]:
     """
-    Безопасно выполняет Python-код в изолированном subprocess.
-
-    Двухуровневая защита:
-      1. AST-валидация (validator.py) — до запуска процесса
-      2. Subprocess-изоляция — stripped env, hard timeout
+    Выполняет Python-код в Docker-контейнере с максимальной изоляцией.
 
     Args:
-        code: строка с Python-кодом
+        code: Python-код для выполнения
 
     Returns:
-        (success: bool, output: str)
-        success=True  — код завершился с кодом 0
-        success=False — нарушение безопасности, таймаут или ошибка выполнения
+        (success, output)
+        success=True  → код завершился с кодом 0
+        success=False → блокировка, таймаут или ошибка выполнения
     """
 
     # ── Слой 1: AST-валидация ───────────────────────────────────────────────
     is_safe, violations = validate_code(code)
     if not is_safe:
         lines = "\n".join(f"  • {v}" for v in violations)
-        return False, f"[SANDBOX] Код заблокирован. Обнаружены нарушения:\n{lines}"
+        return False, f"[SANDBOX] Код заблокирован. Нарушения:\n{lines}"
 
-    # ── Слой 2: Subprocess-изоляция ─────────────────────────────────────────
-    tmp_path: str | None = None
+    # ── Слой 2: Docker-изоляция ─────────────────────────────────────────────
     try:
-        # Записываем код во временный .py файл
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".py",
-            encoding="utf-8",
-            delete=False
-        ) as tmp:
-            tmp.write(code)
-            tmp_path = tmp.name
-
-        # Минимальное окружение: только то, что нужно Python для запуска на Windows
-        safe_env = {
-            "PATH":       os.environ.get("PATH", ""),
-            "SYSTEMROOT": os.environ.get("SYSTEMROOT", "C:\\Windows"),  # Windows CRT
-            "TEMP":       tempfile.gettempdir(),
-            "TMP":        tempfile.gettempdir(),
-        }
-
         proc = subprocess.run(
-            [sys.executable, tmp_path],   # используем тот же Python, что и агент
+            [
+                "docker", "run",
+                "--rm",                                   # удалить контейнер после выполнения
+                "--interactive",                          # держать stdin открытым (для передачи кода)
+
+                # ── Сеть ────────────────────────────────────────────────────
+                "--network=none",                         # полное отсутствие сети
+
+                # ── Ресурсы (cgroups) ────────────────────────────────────────
+                "--memory=64m",                           # лимит RAM
+                "--memory-swap=64m",                      # swap = 0 (memory-swap == memory)
+                "--cpus=0.5",                             # не более 50% одного ядра
+                "--pids-limit=32",                        # не более 32 процессов (fork bomb)
+
+                # ── Файловая система ─────────────────────────────────────────
+                "--read-only",                            # вся FS контейнера только для чтения
+                "--tmpfs=/tmp:size=8m,noexec,nosuid",     # /tmp — единственное место для записи
+                                                          # noexec — нельзя запускать файлы из /tmp
+                                                          # nosuid — suid-биты в /tmp игнорируются
+
+                # ── Привилегии ───────────────────────────────────────────────
+                "--user=nobody",                          # непривилегированный пользователь
+                "--cap-drop=ALL",                         # убрать все Linux capabilities
+                "--security-opt=no-new-privileges",       # нельзя поднять привилегии через setuid
+                "--no-healthcheck",                       # не запускать healthcheck
+
+                # ── Переменные окружения Python ──────────────────────────────
+                "-e", "PYTHONDONTWRITEBYTECODE=1",        # не писать .pyc файлы (нужно для --read-only)
+                "-e", "PYTHONUNBUFFERED=1",               # вывод без буферизации (сразу в stdout)
+
+                DOCKER_IMAGE,
+
+                # Команда внутри контейнера:
+                # timeout <N> python -
+                #   timeout — убивает процесс через N секунд (coreutils, есть в debian slim)
+                #   python - — читает код из stdin
+                "timeout", str(TIMEOUT_SECONDS), "python", "-",
+            ],
+            input=code,                                           # код передаётся через stdin
             capture_output=True,
             text=True,
             encoding="utf-8",
-            errors="replace",             # не падаем на нестандартных символах
-            timeout=TIMEOUT_SECONDS,
-            env=safe_env,
+            errors="replace",
+            timeout=TIMEOUT_SECONDS + STARTUP_OVERHEAD,          # общий таймаут включает старт контейнера
         )
 
         # Объединяем stdout + stderr
@@ -89,22 +108,31 @@ def execute_python(code: str) -> Tuple[bool, str]:
                 + f"\n... [вывод обрезан: показано {MAX_OUTPUT_CHARS} из {len(output)} символов]"
             )
 
+        # Код 124 — стандартный exit code команды `timeout` при срабатывании таймаута
+        if proc.returncode == 124:
+            return False, (
+                f"[SANDBOX] Превышен лимит времени выполнения ({TIMEOUT_SECONDS} с). "
+                "Процесс принудительно остановлен."
+            )
+
         success = proc.returncode == 0
-        return success, output if output.strip() else "(нет вывода)"
+        if not output.strip():
+            if success:
+                return False, (
+                    "[NO OUTPUT] The code ran without errors but printed nothing.\n"
+                    "This means the tests were NOT verified.\n"
+                    "You MUST add assert statements and print('ALL TESTS PASSED') to confirm correctness."
+                )
+            else:
+                return False, "[ERROR] Process exited with an error but produced no output."
+        return success, output
 
     except subprocess.TimeoutExpired:
         return False, (
-            f"[SANDBOX] Превышен лимит времени выполнения ({TIMEOUT_SECONDS} с). "
-            "Процесс принудительно остановлен."
+            f"[SANDBOX] Превышен общий таймаут "
+            f"({TIMEOUT_SECONDS + STARTUP_OVERHEAD} с, включая старт контейнера)."
         )
     except FileNotFoundError:
-        return False, "[SANDBOX] Ошибка: не найден интерпретатор Python."
+        return False, "[SANDBOX] Ошибка: команда 'docker' не найдена. Установите и запустите Docker Desktop."
     except Exception as e:
-        return False, f"[SANDBOX] Внутренняя ошибка выполнения: {e}"
-    finally:
-        # Временный файл удаляется всегда
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        return False, f"[SANDBOX] Внутренняя ошибка: {e}"

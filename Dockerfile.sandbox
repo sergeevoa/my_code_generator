@@ -1,0 +1,29 @@
+# Образ для sandbox-выполнения кода агентом.
+#
+# Используется в docker_executor.py командой:
+#   docker run --rm --interactive ... python:3.11-slim timeout N python -
+#
+# Этот Dockerfile — опциональная кастомизация базового образа.
+# Без него агент использует python:3.11-slim напрямую.
+
+FROM python:3.11-slim
+
+# Не писать .pyc файлы (нужно для --read-only контейнера)
+ENV PYTHONDONTWRITEBYTECODE=1
+# Вывод без буферизации — сразу попадает в stdout
+ENV PYTHONUNBUFFERED=1
+
+# Устанавливаем только safe-библиотеки для вычислений и алгоритмов.
+# Сетевые, файловые и системные библиотеки намеренно НЕ включены.
+RUN pip install --no-cache-dir \
+    numpy==1.26.4 \
+    sympy==1.12
+
+# Убираем pip и setuptools — они не нужны внутри sandbox
+RUN pip uninstall -y pip setuptools wheel 2>/dev/null || true
+
+# Переключаемся на непривилегированного пользователя
+USER nobody
+
+# Рабочая директория — /tmp (единственное место с правом записи при --read-only)
+WORKDIR /tmp
