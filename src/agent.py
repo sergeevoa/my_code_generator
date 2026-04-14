@@ -2,111 +2,14 @@ import json
 import re
 import ast
 import sys
+import asyncio
+import time
 import chardet
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from sandbox.executor import execute_python as _sandbox_execute
-
-SYSTEM_PROMPT = """You are a coding assistant that can read, write, and manage files.
-
-You have access to the following tools:
-
-1) read_file
-Description:
-Read the contents of a file at the given path.
-Input (JSON):
-{
-  "path": "string"
-}
-
-2) write_file
-Description:
-Write content to a file at the given path.
-Creates the file if it does not exist.
-Can overwrite or append to existing content.
-If User's message contains words "create file" or "создай файл" you MUST execute this tool.
-If User's message contains words "add", "допиши", "измени", "добавь", "create" and file at the given path already exist, you MUST use this tool in "a" mode
-When you use this tool in "a" mode, you CAN'T change code that exist in the file UNLESS it's nessesary for new code perfomance.
-Input (JSON):
-{
-  "path": "string",
-  "content": "string",
-  "mode": "w" | "a"   // optional, default is "w"
-}
-
-3) list_files
-Description:
-List files in the specified directory.
-Input (JSON):
-{
-  "path": "string", // optional, default is "."
-}
-
-4) execute_python
-Description:
-Execute a Python code snippet in a safe sandbox and return the output.
-Use this to test generated code, verify logic, run calculations, or check for runtime errors.
-The sandbox blocks dangerous operations (file I/O, network, subprocesses, eval/exec).
-Input (JSON):
-{
-  "code": "string"  // Python code to execute
-}
-
-----------------------------------------
-
-IMPORTANT RULES FOR TOOL USAGE:
-
-• When you want to use a tool, you MUST respond with ONLY a valid JSON object.
-• The JSON object MUST have exactly the following structure:
-
-{
-  "tool": "<tool_name>",
-  "input": {
-    ... tool input fields ...
-  }
-}
-
-• Do NOT include any text before or after the JSON.
-• Do NOT wrap the JSON in Markdown.
-• Do NOT explain what you are doing.
-• Do NOT add comments inside the JSON.
-
-----------------------------------------
-
-RULES FOR NORMAL RESPONSES:
-
-• If no tool is needed, respond with plain text.
-• Do NOT return JSON unless you are calling a tool.
-
-----------------------------------------
-
-EXAMPLES:
-
-Correct tool call:
-{
-  "tool": "read_file",
-  "input": {
-    "path": "main.py"
-  }
-}
-
-Correct normal response:
-The function should validate input parameters before processing them.
-
-----------------------------------------
-
-You are responsible for deciding when a tool is required.
-
----------------------------------------
-LANGUAGE POLICY (must follow exactly):
-- If the user's message contains Russian words, reply ONLY in Russian.
-- If the user's message is fully in English, reply ONLY in English.
-- Under NO CIRCUMSTANCES reply in Chinese or any other language.
-- If you cannot determine whether the user wrote in Russian or English, reply in English.
-- If you are calling tools, keep the tool-call JSON in the same language format as the user's request (Russian -> Russian, English -> English).
-- If you output any text in a disallowed language, that response should be treated as invalid.
-"""
+from system_prompt import SYSTEM_PROMPT
 
 MAX_REACT_STEPS = 6
 
@@ -239,12 +142,18 @@ TRIPLE_RE = re.compile(r'(""".*?"""|\'\'\'.*?\'\'\')', flags=re.S)
 
 def replace_triple_quotes_with_json_string(s: str) -> str:
     def repl(m):
-        block = m.group(0)
-        # убираем внешние тройные кавычки
-        inner = block[3:-3]
-        # json.dumps вернёт валидную JSON-строку с экранированием
+        inner = m.group(0)[3:-3]
         return json.dumps(inner)
     return TRIPLE_RE.sub(repl, s)
+
+# Заменить бэктик-строки (`...`) на валидную JSON-строку.
+# Некоторые модели используют JS-стиль template literals вместо JSON-кавычек.
+BACKTICK_RE = re.compile(r'`(.*?)`', flags=re.S)
+
+def replace_backticks_with_json_string(s: str) -> str:
+    def repl(m):
+        return json.dumps(m.group(1))
+    return BACKTICK_RE.sub(repl, s)
 
 def try_parse_candidate(s: str) -> Any:
     # 1) чистый json
@@ -253,7 +162,15 @@ def try_parse_candidate(s: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    # 2) если есть тройные кавычки, попытаемся заменить их на валидные JSON-строки
+    # 2) бэктик-строки (`...`) → JSON-строки, затем парсим
+    if '`' in s:
+        try:
+            sanitized = replace_backticks_with_json_string(s)
+            return json.loads(sanitized)
+        except Exception:
+            pass
+
+    # 3) тройные кавычки → JSON-строки, затем парсим
     if '"""' in s or "'''" in s:
         try:
             sanitized = replace_triple_quotes_with_json_string(s)
@@ -330,18 +247,37 @@ async def run_agent_async(
     for step in range(max_react_steps):
         current_text = ""
 
-        # Потоковый вывод ответа модели
-        # Потоковый вывод ответа модели — astream должен быть async generator, yielding str
+        async def _waiting_ticker(step_num: int, total: int) -> None:
+            """Печатает счётчик секунд пока не придёт первый токен от модели."""
+            start = time.monotonic()
+            while True:
+                elapsed = int(time.monotonic() - start)
+                print(
+                    f"\r[Step {step_num}/{total}] Waiting for first token... {elapsed}s",
+                    end="", flush=True, file=sys.stderr,
+                )
+                await asyncio.sleep(1)
+
+        ticker = asyncio.create_task(_waiting_ticker(step + 1, max_react_steps))
+        first_chunk = True
+
         try:
-            async for chunk in client.astream(conversation_history, max_tokens=1024, temperature=0.2):
-                # chunk — кусочек текста из Ollama (поле "response")
+            async for chunk in client.astream(conversation_history, max_tokens=8192, temperature=0.2):
+                if first_chunk:
+                    # Первый токен пришёл — убираем счётчик, дальше модель сама пишет в stdout
+                    ticker.cancel()
+                    print(f"\r[Step {step + 1}/{max_react_steps}] " + " " * 40 + "\r",
+                          end="", flush=True, file=sys.stderr)
+                    first_chunk = False
                 sys.stdout.write(chunk)
                 sys.stdout.flush()
                 current_text += chunk
         except Exception as e:
-            # Логируем и корректно завершаем агент при ошибке стрима
+            ticker.cancel()
             print(f"\n[Agent error while streaming]: {e}", file=sys.stderr)
             return
+        finally:
+            ticker.cancel()
         
         print()
 
