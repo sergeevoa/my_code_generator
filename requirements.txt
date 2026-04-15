@@ -1,0 +1,7 @@
+anyio==4.5.2
+chardet==5.2.0
+httpx==0.28.1
+openai==2.2.0
+pydantic==2.10.6
+pydantic_core==2.27.2
+python-dotenv==1.0.1
