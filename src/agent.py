@@ -4,103 +4,11 @@ import asyncio
 import time
 from typing import List, Dict, Any, Optional
 
-
-from sandbox.executor import execute_python as _sandbox_execute
 from system_prompt import SYSTEM_PROMPT
 from tools import TOOLS, execute_tool
 
 MAX_REACT_STEPS = 6
 
-
-def read_file(path: str) -> str:
-    """Прочитать и вернуть содержимое файла с автоматическим определением кодировки."""
-    try:
-        file_path = Path(path)
-        if not file_path.exists():
-            return f"Error: File not found: {path}"
-
-        # Читаем файл в бинарном режиме для детекции кодировки
-        raw_data = file_path.read_bytes()
-        detection = chardet.detect(raw_data)
-        encoding = detection.get("encoding")
-
-        # Декодируем содержимое файла в найденной кодировке
-        return raw_data.decode(encoding or "utf-8", errors="replace")
-
-    except PermissionError:
-        return f"Error: Permission denied: {path}"
-    except Exception as e:
-        return f"Error reading file: {e}"
-
-def write_file(path: str, content: str, mode: str = "w") -> str:
-    """
-    Записать content в файл с учётом кодировки.
-    Режимы:
-        'w' - перезаписать файл (по умолчанию)
-        'a' - добавить в конец файла
-    Если файл уже существует, сохраняем его текущую кодировку.
-    """
-    try:
-        if mode not in ("w", "a"):
-            return f"Error: Invalid mode '{mode}'. Use 'w' or 'a'."
-
-        file_path = Path(path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Определяем кодировку, если файл существует
-        encoding = "utf-8"
-        if file_path.exists():
-            raw_data = file_path.read_bytes()
-            detection = chardet.detect(raw_data)
-            encoding = detection.get("encoding", "utf-8")
-
-        with open(file_path, mode, encoding=encoding, errors="replace") as f:
-            f.write(content)
-
-        action = "Appended to" if mode == "a" else "Wrote to"
-        return f"Successfully {action} {path} (encoding: {encoding})"
-
-    except PermissionError:
-        return f"Error: Permission denied: {path}"
-    except Exception as e:
-        return f"Error writing file: {e}"
-
-# Точка означает текущую рабочую директорию
-def list_files(path: str = ".") -> str:
-    """Возвращает список файлов и папок, находящихся по указанному пути."""
-    try:
-        entries = []
-        p = Path(path)
-        for entry in sorted(p.iterdir()):
-            if entry.is_dir():
-                entries.append(f"[DIR] {entry.name}/")
-            else:
-                entries.append(f"[FILE] {entry.name}")
-        if not entries:
-           return f"Directory is empty: {path}"
-        return "\n".join(entries)
-    except FileNotFoundError:
-        return f"Error: Directory not found: {path}"
-    except NotADirectoryError:
-        return f"Error: Not a directory: {path}"
-    except PermissionError:
-        return f"Error: Permission denied: {path}"
-    except Exception as e:
-        return f"Error listing directory: {e}"
-    
-def execute_tool(tool_name: str, tool_input: dict) -> str:
-    """Воспользоваться инструментом и вернуть результат."""
-    try:
-        if tool_name == "read_file":
-            return read_file(tool_input["path"])
-        elif tool_name == "write_file":
-            return write_file(tool_input["path"], tool_input["content"], tool_input.get("mode", "w"))
-        elif tool_name == "list_files":
-            return list_files(tool_input.get("path", "."))
-        else:
-            return f"Error: Unknown tool: {tool_name}"
-    except Exception as e:
-        return f"Error executing tool {tool_name} : {e}"
 
 def ensure_system_in_history(history: List[Dict[str, str]]) -> None:
     """Добавить system prompt в начало истории, если он там не присутствует."""
