@@ -7,6 +7,8 @@ import chardet
 from pathlib import Path
 from typing import Dict, List, Any
 
+from sandbox.executor import execute_python as _sandbox_execute
+
 
 # ─── Описания инструментов для модели ───────────────────────────────────────
 
@@ -76,6 +78,39 @@ TOOLS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_code",
+            "description": (
+                "Выполнить Python-код в изолированном Docker-sandbox и вернуть stdout + stderr.\n"
+                "\n"
+                "Используй этот инструмент чтобы:\n"
+                "  • протестировать написанное решение перед показом пользователю;\n"
+                "  • проверить корректность алгоритма через assert-тесты;\n"
+                "  • запустить вычисления или эксперименты.\n"
+                "\n"
+                "Sandbox БЛОКИРУЕТ: сеть, файловый I/O, subprocess, eval/exec,\n"
+                "  модули os, sys, pathlib и другие опасные импорты.\n"
+                "Пиши чистый алгоритмический код — без input(), без open().\n"
+                "\n"
+                "Тест ОБЯЗАН заканчиваться строкой print('ALL TESTS PASSED').\n"
+                "Если вывод не содержит этой строки — тест считается проваленным.\n"
+                "\n"
+                "Лимит выполнения: 10 секунд."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Python-код для выполнения. Должен содержать assert-проверки и print('ALL TESTS PASSED').",
+                    }
+                },
+                "required": ["code"],
             },
         },
     },
@@ -162,10 +197,19 @@ def list_files(path: str = ".") -> str:
         return f"Error listing directory: {e}"
 
 
+def execute_code(code: str) -> str:
+    """Выполнить Python-код в Docker-sandbox и вернуть форматированный результат."""
+    success, output = _sandbox_execute(code)
+    prefix = "[OK]" if success else "[ERROR]"
+    return f"{prefix}\n{output}"
+
+
 def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
     """Выполнить инструмент по имени и вернуть результат в виде строки."""
     try:
-        if tool_name == "read_file":
+        if tool_name == "execute_code":
+            return execute_code(tool_input["code"])
+        elif tool_name == "read_file":
             return read_file(tool_input["path"])
         elif tool_name == "write_file":
             return write_file(
