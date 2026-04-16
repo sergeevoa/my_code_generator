@@ -28,12 +28,17 @@ STARTUP_OVERHEAD: int = 15    # запас на старт Docker-контейн
 MAX_OUTPUT_CHARS: int = 10_000
 
 
-def execute_python(code: str) -> Tuple[bool, str]:
+def execute_python(code: str, validate: bool = True) -> Tuple[bool, str]:
     """
     Выполняет Python-код в Docker-контейнере с максимальной изоляцией.
 
     Args:
-        code: Python-код для выполнения
+        code:     Python-код для выполнения.
+        validate: Если True (по умолчанию), перед запуском выполняется
+                  AST-валидация — нужна для кода от агента/пользователя.
+                  Передайте False только для заведомо доверенного кода
+                  (например, тест-сюиты HumanEval), чтобы не блокировать
+                  легитимные импорты вроде sys/os.
 
     Returns:
         (success, output)
@@ -41,11 +46,12 @@ def execute_python(code: str) -> Tuple[bool, str]:
         success=False → блокировка, таймаут или ошибка выполнения
     """
 
-    # ── Слой 1: AST-валидация ───────────────────────────────────────────────
-    is_safe, violations = validate_code(code)
-    if not is_safe:
-        lines = "\n".join(f"  • {v}" for v in violations)
-        return False, f"[SANDBOX] Код заблокирован. Нарушения:\n{lines}"
+    # ── Слой 1: AST-валидация (только для недоверенного кода) ───────────────
+    if validate:
+        is_safe, violations = validate_code(code)
+        if not is_safe:
+            lines = "\n".join(f"  • {v}" for v in violations)
+            return False, f"[SANDBOX] Код заблокирован. Нарушения:\n{lines}"
 
     # ── Слой 2: Docker-изоляция ─────────────────────────────────────────────
     try:
