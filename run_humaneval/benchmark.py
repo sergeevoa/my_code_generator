@@ -188,8 +188,7 @@ async def run_benchmark(mode: str) -> None:
         # ── Collect resource readings ─────────────────────────────────────────
         resources = monitor.stop()
         vram_after = get_vram_used_mb()
-        resources["vram_delta_mb"]      = round(max(0.0, vram_after - vram_baseline_mb), 1)
-        resources["sandbox_peak_ram_mb"] = 0  # Docker container RAM not tracked here
+        resources["vram_delta_mb"] = round(max(0.0, vram_after - vram_baseline_mb), 1)
 
         # ── Build and persist task record ─────────────────────────────────────
         record: Dict[str, Any] = {
