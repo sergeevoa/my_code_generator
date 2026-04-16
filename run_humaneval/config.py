@@ -13,6 +13,9 @@ from typing import Any, Dict
 # Project root (run_humaneval/ → project root)
 ROOT: Path = Path(__file__).parent.parent
 
+# Directory where all benchmark output files are written
+RESULTS_DIR: Path = ROOT / "humaneval_results"
+
 # ── LLM server ────────────────────────────────────────────────────────────────
 MODEL    = os.getenv("LLAMA_MODEL",    "Qwen2.5-Coder-7B-Instruct-AWQ")
 BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8080/v1")

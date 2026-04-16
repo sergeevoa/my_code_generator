@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from .agent import run_agent_for_eval
 from .client import TrackingLlamaClient
-from .config import MODEL, BASE_URL, ROOT, RUN_INFO_TEMPLATE
+from .config import MODEL, BASE_URL, RESULTS_DIR, RUN_INFO_TEMPLATE
 from .dataset import load_humaneval
 from .monitor import ResourceMonitor, get_vram_used_mb
 from .verifier import verify_solution
@@ -94,6 +94,9 @@ async def run_benchmark(mode: str) -> None:
     all_tasks: List[Dict[str, Any]] = load_humaneval()
     total = len(all_tasks)
 
+    # ── Ensure output directory exists ───────────────────────────────────────
+    RESULTS_DIR.mkdir(exist_ok=True)
+
     # ── Select tasks and resolve file paths ───────────────────────────────────
     checkpoint_file: Optional[Path]
     completed_ids: set
@@ -104,15 +107,15 @@ async def run_benchmark(mode: str) -> None:
         checkpoint_file = None
         completed_ids   = set()
         fresh_start     = True
-        raw_file     = ROOT / "humaneval_debug_raw.jsonl"
-        summary_file = ROOT / "humaneval_debug_summary.json"
+        raw_file     = RESULTS_DIR / "humaneval_debug_raw.jsonl"
+        summary_file = RESULTS_DIR / "humaneval_debug_summary.json"
         print(f"[DEBUG] Running 3 tasks — indices {indices}", flush=True)
 
     else:  # full
         selected_tasks  = all_tasks
-        checkpoint_file = ROOT / ".humaneval_full_checkpoint.json"
-        raw_file        = ROOT / "humaneval_full_raw.jsonl"
-        summary_file    = ROOT / "humaneval_full_summary.json"
+        checkpoint_file = RESULTS_DIR / ".humaneval_full_checkpoint.json"
+        raw_file        = RESULTS_DIR / "humaneval_full_raw.jsonl"
+        summary_file    = RESULTS_DIR / "humaneval_full_summary.json"
         completed_ids   = set()
         fresh_start     = True
 

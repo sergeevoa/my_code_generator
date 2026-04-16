@@ -18,5 +18,8 @@ venv/
 # Agent tasks
 tasks/
 
-# Generation aritifacts
+# Generation artifacts
 gen_artifacts/
+
+# HumanEval benchmark results
+humaneval_results/
