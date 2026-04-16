@@ -59,7 +59,10 @@ def verify_solution(
     parts.append("print('ALL TESTS PASSED')")
 
     test_code = "\n\n".join(parts)
-    success, output = execute_python(test_code)
+    # validate=False: тест-сюита из датасета — доверенный код; AST-валидация
+    # ложно блокирует легитимные импорты (sys, os и др.) из тестов HumanEval.
+    # Docker-изоляция остаётся и обеспечивает достаточный уровень безопасности.
+    success, output = execute_python(test_code, validate=False)
 
     if success and "ALL TESTS PASSED" in output:
         return True, None

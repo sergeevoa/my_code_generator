@@ -155,6 +155,7 @@ async def run_benchmark(mode: str) -> None:
     tasks_run = 0
     tasks_passed = 0
     n_selected = len(selected_tasks)
+    initial_completed = len(completed_ids)  # snapshot before the loop; completed_ids grows during run
 
     for task in selected_tasks:
         task_id: str = str(task["task_id"])
@@ -164,10 +165,11 @@ async def run_benchmark(mode: str) -> None:
             continue
 
         tasks_run += 1
-        done_so_far = len(completed_ids) + tasks_run
+        done_so_far = initial_completed + tasks_run
         print(f"\n[TASK] {task_id}  ({done_so_far}/{n_selected})", flush=True)
 
         # ── Resource monitoring ───────────────────────────────────────────────
+        vram_before_task = get_vram_used_mb()   # per-task baseline (right before inference)
         monitor = ResourceMonitor()
         monitor.start()
         t_start = time.monotonic()
@@ -186,9 +188,13 @@ async def run_benchmark(mode: str) -> None:
         wall_time_s = round(time.monotonic() - t_start, 2)
 
         # ── Collect resource readings ─────────────────────────────────────────
+        # vram_delta_mb: peak VRAM during the task minus VRAM right before it
+        # started — shows actual per-task allocation (e.g. KV-cache growth).
+        # Can be negative if the server released memory; we report the raw value.
         resources = monitor.stop()
-        vram_after = get_vram_used_mb()
-        resources["vram_delta_mb"] = round(max(0.0, vram_after - vram_baseline_mb), 1)
+        resources["vram_delta_mb"] = round(
+            resources["vram_peak_mb"] - vram_before_task, 1
+        )
 
         # ── Build and persist task record ─────────────────────────────────────
         record: Dict[str, Any] = {
