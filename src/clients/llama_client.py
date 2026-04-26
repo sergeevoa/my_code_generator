@@ -24,6 +24,22 @@ class LlamaClient:
             timeout=default_timeout,
         )
 
+    async def acomplete(
+        self,
+        messages: List[Dict[str, Any]],
+        max_tokens: int = 512,
+        temperature: float = 0.3,
+    ) -> str:
+        """Нестриминговый chat-completion для внутренних задач (суммаризация контекста)."""
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=cast(Any, messages),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=False,
+        )
+        return response.choices[0].message.content or ""
+
     async def astream_with_tools(
         self,
         messages: List[Dict[str, Any]],

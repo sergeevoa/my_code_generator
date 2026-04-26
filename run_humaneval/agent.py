@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, cast
 
 from sandbox.executor import execute_python  # available via sys.path set in __init__
 
+from context_manager import compact_history  # available via sys.path set in __init__
+
 from .client import TrackingLlamaClient
 from .config import MAX_REACT_STEPS
 from .prompts import EVAL_SYSTEM_PROMPT, EVAL_TOOLS
@@ -63,6 +65,7 @@ def extract_code(response: str) -> Optional[str]:
 async def run_agent_for_eval(
     client: TrackingLlamaClient,
     task: Dict[str, Any],
+    max_tokens: int = 4096,
 ) -> Dict[str, Any]:
     """
     Run the ReACT agent on a single HumanEval task and collect metrics.
@@ -89,13 +92,20 @@ async def run_agent_for_eval(
     agent_error_type: Optional[str] = None
 
     for _step in range(MAX_REACT_STEPS):
+        # ── Компрессия контекста перед запросом к LLM ────────────────────────
+        # max_response_tokens совпадает с max_tokens ниже — одна переменная
+        # используется в обоих местах, поэтому они гарантированно синхронны.
+        # В eval-режиме скользящее окно не сработает (всего один user-ход),
+        # но проход 1 обрежет длинные выводы execute_code внутри задачи.
+        compact_history(history, max_response_tokens=max_tokens)
+
         tool_calls_received: List[Dict[str, Any]] = []
 
         try:
             async for event in client.astream_with_tools(
                 history,
                 EVAL_TOOLS,
-                max_tokens=4096,
+                max_tokens=max_tokens,
                 temperature=0.2,
             ):
                 if event["type"] == "tool_use":
