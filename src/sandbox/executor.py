@@ -135,10 +135,10 @@ def execute_python(code: str, validate: bool = True) -> Tuple[bool, str]:
 
     except subprocess.TimeoutExpired:
         return False, (
-            f"[SANDBOX] Превышен общий таймаут "
+            f"[INFRASTRUCTURE ERROR] Превышен общий таймаут "
             f"({TIMEOUT_SECONDS + STARTUP_OVERHEAD} с, включая старт контейнера)."
         )
     except FileNotFoundError:
-        return False, "[SANDBOX] Ошибка: команда 'docker' не найдена. Установите и запустите Docker Desktop."
+        return False, "[INFRASTRUCTURE ERROR] Docker не найден. Установите и запустите Docker Desktop."
     except Exception as e:
-        return False, f"[SANDBOX] Внутренняя ошибка: {e}"
+        return False, f"[INFRASTRUCTURE ERROR] Внутренняя ошибка sandbox: {e}"

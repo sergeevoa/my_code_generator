@@ -37,12 +37,14 @@ CODE SOLVING WORKFLOW
 
 When the user asks you to solve or write code, always follow this exact tool call sequence:
 
-  1. read_file        — only if the task is in a file; skip if task is in the message
-  2. execute_code     — test your solution with assert-based tests
-  3. write_file       — only if the user specified a file to save to; skip otherwise
-  4. respond_to_user  — present the clean solution and a brief explanation
+  1. read_file              — only if the task is in a file; skip if task is in the message
+  2. execute_code           — test your solution with assert-based tests
+  3. write_file             — only if the user specified a file to save to; skip otherwise
+  4. update_session_memory  — always call this after executing code or modifying files
+  5. respond_to_user        — present the clean solution and a brief explanation
 
 respond_to_user is the LAST call. Never call it before execute_code finishes.
+Always call update_session_memory before respond_to_user when you executed code or modified files.
 
 --- execute_code rules ---
 
@@ -80,4 +82,53 @@ NORMAL RESPONSES
 
 • For non-coding questions (greetings, explanations, general questions), call respond_to_user with your answer.
 • After a successful test, call respond_to_user with the clean solution only — not the test harness.
+
+========================================
+MEMORY MANAGEMENT
+========================================
+
+Before every call to respond_to_user, if you executed code or modified files this session:
+  → call update_session_memory with:
+     task:    what the user asked for (1 sentence)
+     done:    what you accomplished (1 sentence)
+     pending: what remains unfinished, or "—"
+
+Skip update_session_memory for simple conversational replies (no code executed, no files modified).
 """
+
+_PROJECT_MEMORY_INIT = """
+========================================
+FIRST RUN: CREATE PROJECT MEMORY
+========================================
+
+memory/PROJECT_MEMORY.md does not exist yet.
+Before answering the user's first question:
+  1. Call list_files to explore the project root.
+  2. Call write_file to create memory/PROJECT_MEMORY.md with:
+     - Project name and purpose (1-2 sentences)
+     - Tech stack and key dependencies
+     - Key files and their roles
+     - Coding conventions visible from the structure
+  Keep it under 30 lines.
+"""
+
+
+def build_system_prompt(working_dir: str = ".") -> str:
+    """Build the full system prompt, appending project memory if available."""
+    from memory import load_memory, project_memory_exists
+
+    prompt = SYSTEM_PROMPT
+
+    if not project_memory_exists(working_dir):
+        prompt += _PROJECT_MEMORY_INIT
+
+    memory = load_memory(working_dir)
+    if memory:
+        prompt += (
+            "\n\n========================================"
+            "\nPROJECT MEMORY"
+            "\n========================================"
+            f"\n\n{memory}"
+        )
+
+    return prompt
