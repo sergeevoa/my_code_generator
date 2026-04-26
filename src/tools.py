@@ -117,6 +117,34 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "update_session_memory",
+            "description": (
+                "Save a brief summary of the current session to persistent memory. "
+                "Call this before respond_to_user whenever you executed code or modified files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "What the user asked for (1 sentence).",
+                    },
+                    "done": {
+                        "type": "string",
+                        "description": "What you accomplished (1 sentence).",
+                    },
+                    "pending": {
+                        "type": "string",
+                        "description": "What remains unfinished. Use '—' if nothing.",
+                    },
+                },
+                "required": ["task", "done", "pending"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_files",
             "description": "Вывести список файлов и папок в указанной директории.",
             "parameters": {
@@ -204,7 +232,7 @@ def execute_code(code: str) -> str:
     return f"{prefix}\n{output}"
 
 
-def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
+def execute_tool(tool_name: str, tool_input: Dict[str, Any], working_dir: str = ".") -> str:
     """Выполнить инструмент по имени и вернуть результат в виде строки."""
     try:
         if tool_name == "execute_code":
@@ -219,6 +247,14 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
             )
         elif tool_name == "list_files":
             return list_files(tool_input.get("path", "."))
+        elif tool_name == "update_session_memory":
+            from memory import update_session_memory as _update_session_memory
+            return _update_session_memory(
+                working_dir,
+                tool_input.get("task", ""),
+                tool_input.get("done", ""),
+                tool_input.get("pending", "—"),
+            )
         else:
             return f"Error: Unknown tool: {tool_name}"
     except Exception as e:

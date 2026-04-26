@@ -4,22 +4,59 @@ import asyncio
 import time
 from typing import List, Dict, Any, Optional
 
-from system_prompt import SYSTEM_PROMPT
+from system_prompt import build_system_prompt
 from tools import TOOLS, execute_tool
+from context_manager import compact_history
 
-MAX_REACT_STEPS = 6
+MAX_REACT_STEPS = 8
 
 
-def ensure_system_in_history(history: List[Dict[str, str]]) -> None:
-    """Добавить system prompt в начало истории, если он там не присутствует."""
-    if not history:
-        history.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+def _auto_save_session_memory(
+    history: List[Dict[str, Any]],
+    user_message: str,
+    working_dir: str,
+) -> None:
+    """Fallback: save session memory programmatically if the model forgot to call the tool."""
+    files_written = []
+    code_executed = False
+
+    for msg in history:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []):
+            try:
+                name = tc["function"]["name"]
+                args = json.loads(tc["function"]["arguments"])
+            except (KeyError, json.JSONDecodeError):
+                continue
+            if name == "write_file":
+                files_written.append(args.get("path", "?"))
+            elif name == "execute_code":
+                code_executed = True
+
+    if not files_written and not code_executed:
         return
-    first = history[0]
-    if first.get("role") != "system" or first.get("content") != SYSTEM_PROMPT:
-        # если в истории уже есть system, не вставляем второй раз;
-        # но если первый элемент не system — добавим system в начало
-        history.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+
+    task = user_message[:120]
+    done_parts = []
+    if files_written:
+        done_parts.append(f"wrote {', '.join(files_written)}")
+    if code_executed and not files_written:
+        done_parts.append("tested code in sandbox")
+    done = "; ".join(done_parts)
+
+    try:
+        from memory import update_session_memory
+        update_session_memory(working_dir, task, done, "—")
+        print("[context] session memory auto-saved (model skipped update_session_memory)", file=sys.stderr)
+    except Exception as exc:
+        print(f"[context] session memory auto-save failed: {exc}", file=sys.stderr)
+
+
+def ensure_system_in_history(history: List[Dict[str, str]], system_prompt: str) -> None:
+    """Добавить system prompt в начало истории, если он там не присутствует."""
+    if not history or history[0].get("role") != "system":
+        history.insert(0, {"role": "system", "content": system_prompt})
 
 
 async def run_agent_async(
@@ -27,6 +64,8 @@ async def run_agent_async(
     user_message: str,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
     max_react_steps: int = MAX_REACT_STEPS,
+    max_tokens: int = 4096,
+    working_dir: str = ".",
 ) -> None:
     """
     ReACT-агент (Паттерн B): tool_choice="required" + no-op respond_to_user.
@@ -41,10 +80,27 @@ async def run_agent_async(
     if conversation_history is None:
         conversation_history = []
 
-    ensure_system_in_history(conversation_history)
+    system_prompt = build_system_prompt(working_dir)
+    ensure_system_in_history(conversation_history, system_prompt)
     conversation_history.append({"role": "user", "content": user_message})
 
+    async def _summarizer(text: str) -> str:
+        return await client.acomplete(
+            [{"role": "user", "content": (
+                "Summarize the following agent conversation steps concisely in 3-5 sentences, "
+                "preserving key decisions, file paths, and outcomes:\n\n" + text
+            )}],
+            max_tokens=512,
+        )
+
+    session_memory_saved = False
+
     for step in range(max_react_steps):
+
+        # ── Компрессия контекста перед запросом к LLM ────────────────────────
+        # max_response_tokens совпадает с max_tokens ниже — одна переменная
+        # используется в обоих местах, поэтому они гарантированно синхронны.
+        await compact_history(conversation_history, max_response_tokens=max_tokens, summarizer=_summarizer)
 
         # ── Таймер ожидания первого токена ──────────────────────────────────
         async def _waiting_ticker(step_num: int, total: int) -> None:
@@ -67,7 +123,7 @@ async def run_agent_async(
             async for event in client.astream_with_tools(
                 conversation_history,
                 TOOLS,
-                max_tokens=8192,
+                max_tokens=max_tokens,
                 temperature=0.2,
             ):
                 if first_event:
@@ -110,14 +166,23 @@ async def run_agent_async(
 
             # respond_to_user — финальный ответ; выводим и завершаем цикл
             if func_name == "respond_to_user":
+                if not session_memory_saved:
+                    _auto_save_session_memory(conversation_history, user_message, working_dir)
                 message = func_args.get("message", "")
                 print(message)
                 return
 
             # Рабочий инструмент — выполняем и возвращаем результат модели
-            result = execute_tool(func_name, func_args)
-            short_result = result if len(result) <= 120 else result[:120] + "..."
-            print(f"[TOOL] {func_name}({func_args}) → {short_result}", file=sys.stderr)
+            result = execute_tool(func_name, func_args, working_dir)
+            if func_name == "update_session_memory":
+                session_memory_saved = True
+            print(f"[TOOL] {func_name}({func_args})", file=sys.stderr)
+            print(f"[RESULT]\n{result}\n", file=sys.stderr)
+
+            if result.startswith("[INFRASTRUCTURE ERROR]"):
+                print(f"\n[Agent stopped] Infrastructure error: {result}", file=sys.stderr)
+                print(result)
+                return
 
             conversation_history.append({
                 "role": "tool",
