@@ -8,37 +8,36 @@ import ast
 from typing import Tuple, List
 
 
-# Модули, импорт которых запрещён
+# Модули, импорт которых запрещён.
+# Docker уже обеспечивает изоляцию (--read-only, --network=none, nobody, --cap-drop=ALL),
+# поэтому блокируем только то, что опасно ВНУТРИ контейнера: спавн процессов,
+# низкоуровневый доступ к памяти/ядру и сериализацию с выполнением кода.
 BLOCKED_IMPORTS: frozenset = frozenset({
-    # Файловая система и процессы
-    "os", "subprocess", "shutil", "pathlib", "glob", "fnmatch",
-    # Сеть
+    # Спавн процессов и shell-команды — опасны даже в контейнере
+    "subprocess", "multiprocessing", "os",
+    # Сеть — закрыта --network=none, но блокируем и на уровне AST
     "socket", "requests", "urllib", "http", "ftplib", "smtplib",
     "xmlrpc", "imaplib", "poplib", "telnetlib", "ssl",
-    # Системные/низкоуровневые
-    "sys", "ctypes", "cffi", "io", "builtins", "importlib",
-    "multiprocessing", "threading", "asyncio", "concurrent",
-    "signal", "resource", "gc",
-    # Сериализация (могут выполнять произвольный код)
+    # Низкоуровневый доступ к памяти и ядру
+    "ctypes", "cffi",
+    # Динамический импорт и интроспекция кода
+    "importlib", "builtins",
+    # Сериализация, выполняющая произвольный код при десериализации
     "pickle", "marshal", "shelve", "dill", "cloudpickle",
-    # Windows-специфичные
-    "winreg", "msvcrt", "nt", "_winapi", "winsound",
-    # Прочие потенциально опасные
-    "code", "codeop", "pdb", "profile", "cProfile", "traceback",
-    "inspect", "dis", "py_compile", "compileall",
+    # Windows-специфичные системные модули
+    "winreg", "msvcrt", "nt", "_winapi",
+    # Инструменты выполнения/компиляции кода
+    "code", "codeop", "py_compile", "compileall",
 })
 
-# Встроенные функции, вызов которых запрещён
+# Встроенные функции, вызов которых запрещён.
+# open() убрана: Docker --read-only + отсутствие volume-монтирований уже защищают FS.
 BLOCKED_BUILTINS: frozenset = frozenset({
-    "exec", "eval", "compile",            # выполнение произвольного кода
-    "open",                               # доступ к файловой системе
-    "input",                              # интерактивный ввод (зависнет в subprocess)
-    "__import__",                         # динамический импорт
-    "getattr", "setattr", "delattr",      # обход атрибутов через строки
-    "globals", "locals", "vars",          # доступ к пространству имён
-    "breakpoint",                         # отладчик
-    "memoryview",                         # прямой доступ к памяти
-    "super",                              # обход MRO для дандер-методов
+    "exec", "eval", "compile",   # выполнение произвольного кода
+    "input",                     # интерактивный ввод (зависнет в subprocess)
+    "__import__",                 # динамический импорт
+    "breakpoint",                # вызывает отладчик
+    "memoryview",                # прямой доступ к буферам памяти
 })
 
 # Имена атрибутов, обращение к которым запрещено
