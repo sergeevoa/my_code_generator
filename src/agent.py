@@ -1,8 +1,11 @@
 import json
+import os
 import sys
 import asyncio
 import time
 from typing import List, Dict, Any, Optional
+
+_CODE_EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.cs', '.go', '.rb', '.php', '.rs', '.swift'}
 
 from system_prompt import build_system_prompt
 from tools import TOOLS, execute_tool
@@ -94,6 +97,7 @@ async def run_agent_async(
         )
 
     session_memory_saved = False
+    execute_code_passed = False
 
     for step in range(max_react_steps):
 
@@ -172,8 +176,28 @@ async def run_agent_async(
                 print(message)
                 return
 
+            # Блокируем write_file для файлов с кодом, если execute_code ещё не прошёл
+            if func_name == "write_file" and not execute_code_passed:
+                path = func_args.get("path", "")
+                ext = os.path.splitext(path)[1].lower()
+                if ext in _CODE_EXTENSIONS:
+                    result = (
+                        "[BLOCKED] write_file was rejected: you MUST call execute_code first "
+                        "and receive 'ALL TESTS PASSED' before saving a code file. "
+                        f"Call execute_code with your solution for '{path}', then retry write_file."
+                    )
+                    print(f"[TOOL] {func_name}({func_args}) — BLOCKED (execute_code not yet passed)", file=sys.stderr)
+                    conversation_history.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result,
+                    })
+                    continue
+
             # Рабочий инструмент — выполняем и возвращаем результат модели
             result = execute_tool(func_name, func_args, working_dir)
+            if func_name == "execute_code" and "ALL TESTS PASSED" in result:
+                execute_code_passed = True
             if func_name == "update_session_memory":
                 session_memory_saved = True
             print(f"[TOOL] {func_name}({func_args})", file=sys.stderr)
