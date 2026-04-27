@@ -225,9 +225,9 @@ def list_files(path: str = ".") -> str:
         return f"Error listing directory: {e}"
 
 
-def execute_code(code: str) -> str:
+def execute_code(code: str, working_dir: str = ".") -> str:
     """Выполнить Python-код в Docker-sandbox и вернуть форматированный результат."""
-    success, output = _sandbox_execute(code)
+    success, output = _sandbox_execute(code, working_dir=working_dir)
     prefix = "[OK]" if success else "[ERROR]"
     return f"{prefix}\n{output}"
 
@@ -236,7 +236,7 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any], working_dir: str = 
     """Выполнить инструмент по имени и вернуть результат в виде строки."""
     try:
         if tool_name == "execute_code":
-            return execute_code(tool_input["code"])
+            return execute_code(tool_input["code"], working_dir=working_dir)
         elif tool_name == "read_file":
             return read_file(tool_input["path"])
         elif tool_name == "write_file":

@@ -196,7 +196,7 @@ async def run_agent_async(
 
             # Рабочий инструмент — выполняем и возвращаем результат модели
             result = execute_tool(func_name, func_args, working_dir)
-            if func_name == "execute_code" and "ALL TESTS PASSED" in result:
+            if func_name == "execute_code" and result.startswith("[OK]"):
                 execute_code_passed = True
             if func_name == "update_session_memory":
                 session_memory_saved = True
