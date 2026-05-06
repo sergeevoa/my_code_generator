@@ -69,6 +69,7 @@ async def run_agent_async(
     max_react_steps: int = MAX_REACT_STEPS,
     max_tokens: int = 4096,
     working_dir: str = ".",
+    container=None,
 ) -> None:
     """
     ReACT-агент (Паттерн B): tool_choice="required" + no-op respond_to_user.
@@ -199,7 +200,7 @@ async def run_agent_async(
                     continue
 
             # Рабочий инструмент — выполняем и возвращаем результат модели
-            result = execute_tool(func_name, func_args, working_dir)
+            result = execute_tool(func_name, func_args, working_dir, container=container)
             if func_name == "execute_code" and result.startswith("[OK]"):
                 execute_code_passed = True
             if func_name == "update_session_memory":

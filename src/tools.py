@@ -5,9 +5,9 @@
 
 import chardet
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
-from sandbox.executor import execute_python as _sandbox_execute
+from sandbox.executor import SandboxContainer
 
 
 # ─── Описания инструментов для модели ───────────────────────────────────────
@@ -185,7 +185,8 @@ def read_file(path: str) -> str:
             return f"Error: File not found: {path}"
         raw_data = file_path.read_bytes()
         detection = chardet.detect(raw_data)
-        encoding = detection.get("encoding") or "utf-8"
+        detected = (detection.get("encoding") or "utf-8").lower()
+        encoding = "utf-8" if detected == "ascii" else detected
         return raw_data.decode(encoding, errors="replace")
     except PermissionError:
         return f"Error: Permission denied: {path}"
@@ -204,7 +205,9 @@ def write_file(path: str, content: str, mode: str = "w") -> str:
         if file_path.exists():
             raw_data = file_path.read_bytes()
             detection = chardet.detect(raw_data)
-            encoding = detection.get("encoding") or "utf-8"
+            detected = (detection.get("encoding") or "utf-8").lower()
+            # ascii is a subset of utf-8; treat it as utf-8 to support non-ASCII content
+            encoding = "utf-8" if detected == "ascii" else detected
         with open(file_path, mode, encoding=encoding, errors="replace") as f:
             f.write(content)
         action = "Appended to" if mode == "a" else "Wrote to"
@@ -238,9 +241,11 @@ def list_files(path: str = ".") -> str:
         return f"Error listing directory: {e}"
 
 
-def execute_code(code: str, working_dir: str = ".") -> str:
+def execute_code(code: str, container: Optional[SandboxContainer]) -> str:
     """Выполнить Python-код в Docker-sandbox и вернуть форматированный результат."""
-    success, output = _sandbox_execute(code, working_dir=working_dir)
+    if container is None:
+        return "[INFRASTRUCTURE ERROR] Sandbox container is not initialized."
+    success, output = container.execute(code)
     if success:
         prefix = "[OK]"
     elif output.startswith("[NOT TESTABLE]"):
@@ -252,11 +257,11 @@ def execute_code(code: str, working_dir: str = ".") -> str:
     return f"{prefix}\n{output}"
 
 
-def execute_tool(tool_name: str, tool_input: Dict[str, Any], working_dir: str = ".") -> str:
+def execute_tool(tool_name: str, tool_input: Dict[str, Any], working_dir: str = ".", container: Optional[SandboxContainer] = None) -> str:
     """Выполнить инструмент по имени и вернуть результат в виде строки."""
     try:
         if tool_name == "execute_code":
-            return execute_code(tool_input["code"], working_dir=working_dir)
+            return execute_code(tool_input["code"], container=container)
         elif tool_name == "read_file":
             return read_file(tool_input["path"])
         elif tool_name == "write_file":
