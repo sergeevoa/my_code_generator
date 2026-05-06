@@ -103,32 +103,10 @@ Before every call to respond_to_user, if you executed code or modified files thi
 Skip update_session_memory for simple conversational replies (no code executed, no files modified).
 """
 
-_PROJECT_MEMORY_INIT = """
-========================================
-FIRST RUN: CREATE PROJECT MEMORY
-========================================
-
-memory/PROJECT_MEMORY.md does not exist yet.
-Before answering the user's first question:
-  1. Call list_files to explore the project root.
-  2. Call write_file to create memory/PROJECT_MEMORY.md with:
-     - Project name and purpose (1-2 sentences)
-     - Tech stack and key dependencies
-     - Key files and their roles
-     - Coding conventions visible from the structure
-  Keep it under 30 lines.
-"""
-
-
 def build_system_prompt(working_dir: str = ".") -> str:
-    """Build the full system prompt, appending project memory if available."""
-    from memory import load_memory, project_memory_exists
+    from memory import load_memory
 
     prompt = SYSTEM_PROMPT
-
-    if not project_memory_exists(working_dir):
-        prompt += _PROJECT_MEMORY_INIT
-
     memory = load_memory(working_dir)
     if memory:
         prompt += (

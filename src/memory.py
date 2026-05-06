@@ -50,6 +50,44 @@ def load_memory(working_dir: str) -> Optional[str]:
     return "\n\n".join(parts) if parts else None
 
 
+def create_project_memory(working_dir: str) -> None:
+    """Scan project structure and write PROJECT_MEMORY.md without using the LLM."""
+    root = Path(working_dir)
+    mdir = _mdir(working_dir)
+    mdir.mkdir(parents=True, exist_ok=True)
+
+    entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name))
+    dirs  = [p.name + "/" for p in entries if p.is_dir()  and not p.name.startswith(".")]
+    files = [p.name       for p in entries if p.is_file() and not p.name.startswith(".")]
+
+    deps = ""
+    req_path = root / "requirements.txt"
+    if req_path.exists():
+        lines = req_path.read_text(encoding="utf-8").strip().splitlines()
+        packages = [
+            ln.split("==")[0].split(">=")[0].split("~=")[0].strip()
+            for ln in lines if ln and not ln.startswith("#")
+        ]
+        deps = ", ".join(packages[:15])
+
+    project_name = root.resolve().name
+
+    structure = "\n".join(f"- {e}" for e in dirs + files)
+    content = (
+        f"# Project: {project_name}\n\n"
+        f"## Purpose\nCode generation and sandboxed Python execution assistant.\n\n"
+        f"## Tech Stack\nLanguage: Python\n"
+        f"Dependencies: {deps or 'see requirements.txt'}\n\n"
+        f"## Structure\n{structure}\n\n"
+        '## Coding Conventions\n'
+        '- Assert-based tests; always end with print("ALL TESTS PASSED")\n'
+        '- execute_code must succeed before write_file for .py files\n'
+        '- No interactive input (input() is blocked in sandbox)\n'
+    )
+
+    (mdir / _PROJECT_FILE).write_text(content, encoding="utf-8")
+
+
 def update_session_memory(working_dir: str, task: str, done: str, pending: str) -> str:
     """Append a new entry to SESSION_MEMORY.md, keeping at most _MAX_SESSIONS entries."""
     mdir = _mdir(working_dir)
