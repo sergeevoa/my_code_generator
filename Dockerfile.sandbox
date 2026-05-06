@@ -16,8 +16,27 @@ ENV PYTHONUNBUFFERED=1
 # Устанавливаем только safe-библиотеки для вычислений и алгоритмов.
 # Сетевые, файловые и системные библиотеки намеренно НЕ включены.
 RUN pip install --no-cache-dir \
+    # Научные вычисления
     numpy==1.26.4 \
-    sympy==1.12
+    scipy==1.13.0 \
+    sympy==1.12 \
+    pandas==2.2.2 \
+    # ML-алгоритмы (без TensorFlow/PyTorch)
+    scikit-learn==1.5.0 \
+    # Визуализация
+    matplotlib==3.9.0 \
+    # Алгоритмы и структуры данных
+    networkx==3.3 \
+    sortedcontainers==2.4.0 \
+    more-itertools==10.3.0 \
+    # Изображения
+    Pillow==10.3.0 \
+    # Утилиты общего назначения
+    pydantic==2.7.0 \
+    python-dateutil==2.9.0 \
+    pyyaml==6.0.1 \
+    regex==2024.4.28 \
+    tqdm==4.66.4
 
 # Убираем pip и setuptools — они не нужны внутри sandbox
 RUN pip uninstall -y pip setuptools wheel 2>/dev/null || true
