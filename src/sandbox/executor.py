@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 from typing import Tuple
 
-from sandbox.validator import validate_code
+from sandbox.validator import validate_code, check_sandbox_compatibility
 
 # ── Настройки ──────────────────────────────────────────────────────────────
 DOCKER_IMAGE          = "code-sandbox:latest"  
@@ -53,6 +53,10 @@ def execute_python(code: str, validate: bool = True, working_dir: str = ".") -> 
         if not is_safe:
             lines = "\n".join(f"  • {v}" for v in violations)
             return False, f"[SANDBOX] Код заблокирован. Нарушения:\n{lines}"
+
+        is_compatible, reason = check_sandbox_compatibility(code)
+        if not is_compatible:
+            return False, reason
 
     # ── Слой 2: Docker-изоляция ─────────────────────────────────────────────
     abs_working_dir = str(Path(working_dir).resolve())

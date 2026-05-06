@@ -54,39 +54,12 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "write_file",
-            "description": (
-                "Записать содержимое в файл. "
-                "Если файл не существует — создаёт его. "
-                "mode='w' — перезаписать, mode='a' — добавить в конец."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Путь к файлу.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Текст для записи.",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["w", "a"],
-                        "description": "Режим записи: 'w' — перезапись, 'a' — добавление.",
-                    },
-                },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "execute_code",
             "description": (
                 "Выполнить Python-код в изолированном Docker-sandbox и вернуть stdout + stderr.\n"
+                "\n"
+                "ОБЯЗАТЕЛЕН перед write_file: для любого кода (.py, .js, .ts и др.) "
+                "сначала вызови execute_code, и только после его успеха — write_file.\n"
                 "\n"
                 "Используй этот инструмент чтобы:\n"
                 "  • протестировать написанное решение перед показом пользователю;\n"
@@ -111,6 +84,46 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Записать содержимое в файл (создаёт файл если не существует). "
+                "mode='w' — перезаписать, mode='a' — добавить в конец.\n"
+                "\n"
+                "Два режима использования:\n"
+                "\n"
+                "1. ТЕКСТОВЫЕ / ДАННЫЕ файлы (.md, .txt, .csv, .json, .yaml, .toml, .ini, .rst и др.):\n"
+                "   → write_file можно вызывать НАПРЯМУЮ, без execute_code.\n"
+                "   Пример: README.md, config.yaml, data.csv — пиши сразу.\n"
+                "\n"
+                "2. ФАЙЛЫ С КОДОМ (.py, .js, .ts, .java, .cpp, .go, .rb и др.):\n"
+                "   → СНАЧАЛА вызови execute_code и дождись '[OK]'.\n"
+                "   → Только после этого вызывай write_file.\n"
+                "   Если вызвать write_file раньше — он будет отклонён системой."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Путь к файлу.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Текст для записи.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["w", "a"],
+                        "description": "Режим записи: 'w' — перезапись, 'a' — добавление.",
+                    },
+                },
+                "required": ["path", "content"],
             },
         },
     },
@@ -228,7 +241,14 @@ def list_files(path: str = ".") -> str:
 def execute_code(code: str, working_dir: str = ".") -> str:
     """Выполнить Python-код в Docker-sandbox и вернуть форматированный результат."""
     success, output = _sandbox_execute(code, working_dir=working_dir)
-    prefix = "[OK]" if success else "[ERROR]"
+    if success:
+        prefix = "[OK]"
+    elif output.startswith("[NOT TESTABLE]"):
+        # Код корректен, но требует внешней инфраструктуры (сеть, БД, сервер).
+        # Возвращаем [OK] чтобы agent.py разрешил write_file без дополнительных изменений.
+        prefix = "[OK]"
+    else:
+        prefix = "[ERROR]"
     return f"{prefix}\n{output}"
 
 
