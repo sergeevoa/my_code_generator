@@ -8,7 +8,7 @@ verdict — this is the "additional check" mentioned in the benchmark spec.
 
 from typing import Any, Dict, Optional, Tuple
 
-from sandbox.executor import execute_python  # available via sys.path set in __init__
+from sandbox.executor import SandboxContainer  # available via sys.path set in __init__
 
 
 def _imports_from_prompt(prompt: str) -> str:
@@ -23,6 +23,7 @@ def _imports_from_prompt(prompt: str) -> str:
 def verify_solution(
     solution_code: str,
     task: Dict[str, Any],
+    container: SandboxContainer,
 ) -> Tuple[bool, Optional[str]]:
     """
     Run the HumanEval test suite against ``solution_code`` in the sandbox.
@@ -62,7 +63,7 @@ def verify_solution(
     # validate=False: тест-сюита из датасета — доверенный код; AST-валидация
     # ложно блокирует легитимные импорты (sys, os и др.) из тестов HumanEval.
     # Docker-изоляция остаётся и обеспечивает достаточный уровень безопасности.
-    success, output = execute_python(test_code, validate=False)
+    success, output = container.execute(test_code, validate=False)
 
     if success and "ALL TESTS PASSED" in output:
         return True, None

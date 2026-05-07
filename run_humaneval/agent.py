@@ -13,7 +13,7 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, cast
 
-from sandbox.executor import execute_python  # available via sys.path set in __init__
+from sandbox.executor import SandboxContainer  # available via sys.path set in __init__
 
 from context_manager import compact_history  # available via sys.path set in __init__
 
@@ -65,6 +65,7 @@ def extract_code(response: str) -> Optional[str]:
 async def run_agent_for_eval(
     client: TrackingLlamaClient,
     task: Dict[str, Any],
+    container: SandboxContainer,
     max_tokens: int = 4096,
 ) -> Dict[str, Any]:
     """
@@ -146,7 +147,7 @@ async def run_agent_for_eval(
 
             if func_name == "execute_code":
                 iterations += 1
-                success, output = execute_python(func_args.get("code", ""))
+                success, output = container.execute(func_args.get("code", ""))
                 prefix = "[OK]" if success else "[ERROR]"
                 result = f"{prefix}\n{output}"
             else:

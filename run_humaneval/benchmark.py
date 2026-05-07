@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from sandbox.executor import SandboxContainer  # available via sys.path set in __init__
+
 from .agent import run_agent_for_eval
 from .client import TrackingLlamaClient
 from .config import MODEL, BASE_URL, RESULTS_DIR, RUN_INFO_TEMPLATE
@@ -139,6 +141,14 @@ async def run_benchmark(mode: str) -> None:
     # ── Create client ─────────────────────────────────────────────────────────
     client = TrackingLlamaClient(model=MODEL, base_url=BASE_URL)
 
+    # ── Start persistent sandbox container ───────────────────────────────────
+    container = SandboxContainer()
+    try:
+        container.start()
+    except RuntimeError as e:
+        print(f"[INFRASTRUCTURE ERROR] Не удалось запустить sandbox-контейнер: {e}", file=sys.stderr)
+        return
+
     # ── VRAM baseline (model assumed already loaded in llama-server) ──────────
     vram_baseline_mb = get_vram_used_mb()
 
@@ -157,90 +167,93 @@ async def run_benchmark(mode: str) -> None:
     n_selected = len(selected_tasks)
     initial_completed = len(completed_ids)  # snapshot before the loop; completed_ids grows during run
 
-    for task in selected_tasks:
-        task_id: str = str(task["task_id"])
+    try:
+        for task in selected_tasks:
+            task_id: str = str(task["task_id"])
 
-        if task_id in completed_ids:
-            print(f"[SKIP] {task_id}", flush=True)
-            continue
+            if task_id in completed_ids:
+                print(f"[SKIP] {task_id}", flush=True)
+                continue
 
-        tasks_run += 1
-        done_so_far = initial_completed + tasks_run
-        print(f"\n[TASK] {task_id}  ({done_so_far}/{n_selected})", flush=True)
+            tasks_run += 1
+            done_so_far = initial_completed + tasks_run
+            print(f"\n[TASK] {task_id}  ({done_so_far}/{n_selected})", flush=True)
 
-        # ── Resource monitoring ───────────────────────────────────────────────
-        vram_before_task = get_vram_used_mb()   # per-task baseline (right before inference)
-        monitor = ResourceMonitor()
-        monitor.start()
-        t_start = time.monotonic()
+            # ── Resource monitoring ───────────────────────────────────────────────
+            vram_before_task = get_vram_used_mb()   # per-task baseline (right before inference)
+            monitor = ResourceMonitor()
+            monitor.start()
+            t_start = time.monotonic()
 
-        # ── Run agent ─────────────────────────────────────────────────────────
-        agent_result = await run_agent_for_eval(client, task)
+            # ── Run agent ─────────────────────────────────────────────────────────
+            agent_result = await run_agent_for_eval(client, task, container=container)
 
-        # ── Independent HumanEval verification ───────────────────────────────
-        passed, error_type = verify_solution(
-            agent_result["final_completion"] or "", task
-        )
-        # Prefer agent-level error if verification found no solution
-        if not passed and not error_type and agent_result["agent_error_type"]:
-            error_type = agent_result["agent_error_type"]
+            # ── Independent HumanEval verification ───────────────────────────────
+            passed, error_type = verify_solution(
+                agent_result["final_completion"] or "", task, container=container
+            )
+            # Prefer agent-level error if verification found no solution
+            if not passed and not error_type and agent_result["agent_error_type"]:
+                error_type = agent_result["agent_error_type"]
 
-        wall_time_s = round(time.monotonic() - t_start, 2)
+            wall_time_s = round(time.monotonic() - t_start, 2)
 
-        # ── Collect resource readings ─────────────────────────────────────────
-        # vram_delta_mb: peak VRAM during the task minus VRAM right before it
-        # started — shows actual per-task allocation (e.g. KV-cache growth).
-        # Can be negative if the server released memory; we report the raw value.
-        resources = monitor.stop()
-        resources["vram_delta_mb"] = round(
-            resources["vram_peak_mb"] - vram_before_task, 1
-        )
-
-        # ── Build and persist task record ─────────────────────────────────────
-        record: Dict[str, Any] = {
-            "type":              "task",
-            "task_id":           task_id,
-            "passed":            passed,
-            "iterations":        agent_result["iterations"],
-            "error_type":        error_type,
-            "prompt_tokens":     agent_result["prompt_tokens"],
-            "completion_tokens": agent_result["completion_tokens"],
-            "wall_time_s":       wall_time_s,
-            "resources":         resources,
-            "final_completion":  agent_result["final_completion"] or "",
-        }
-
-        with open(raw_file, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-        # ── Update checkpoint (full mode) ─────────────────────────────────────
-        if checkpoint_file is not None:
-            completed_ids.add(task_id)
-            checkpoint_file.write_text(
-                json.dumps(
-                    {
-                        "completed_ids": sorted(completed_ids),
-                        "last_updated":  datetime.now().isoformat(),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
+            # ── Collect resource readings ─────────────────────────────────────────
+            # vram_delta_mb: peak VRAM during the task minus VRAM right before it
+            # started — shows actual per-task allocation (e.g. KV-cache growth).
+            # Can be negative if the server released memory; we report the raw value.
+            resources = monitor.stop()
+            resources["vram_delta_mb"] = round(
+                resources["vram_peak_mb"] - vram_before_task, 1
             )
 
-        if passed:
-            tasks_passed += 1
+            # ── Build and persist task record ─────────────────────────────────────
+            record: Dict[str, Any] = {
+                "type":              "task",
+                "task_id":           task_id,
+                "passed":            passed,
+                "iterations":        agent_result["iterations"],
+                "error_type":        error_type,
+                "prompt_tokens":     agent_result["prompt_tokens"],
+                "completion_tokens": agent_result["completion_tokens"],
+                "wall_time_s":       wall_time_s,
+                "resources":         resources,
+                "final_completion":  agent_result["final_completion"] or "",
+            }
 
-        status = "PASS" if passed else "FAIL"
-        print(
-            f"  [{status}]  "
-            f"iters={record['iterations']}  "
-            f"tokens={record['completion_tokens']}  "
-            f"time={record['wall_time_s']}s  "
-            f"vram_peak={resources['vram_peak_mb']:.0f} MB"
-            + (f"  error={error_type}" if error_type else ""),
-            flush=True,
-        )
+            with open(raw_file, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+            # ── Update checkpoint (full mode) ─────────────────────────────────────
+            if checkpoint_file is not None:
+                completed_ids.add(task_id)
+                checkpoint_file.write_text(
+                    json.dumps(
+                        {
+                            "completed_ids": sorted(completed_ids),
+                            "last_updated":  datetime.now().isoformat(),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
+            if passed:
+                tasks_passed += 1
+
+            status = "PASS" if passed else "FAIL"
+            print(
+                f"  [{status}]  "
+                f"iters={record['iterations']}  "
+                f"tokens={record['completion_tokens']}  "
+                f"time={record['wall_time_s']}s  "
+                f"vram_peak={resources['vram_peak_mb']:.0f} MB"
+                + (f"  error={error_type}" if error_type else ""),
+                flush=True,
+            )
+    finally:
+        container.stop()
 
     # ── Print and persist summary ─────────────────────────────────────────────
     summary = compute_summary(raw_file, mode.upper())
