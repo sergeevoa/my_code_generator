@@ -3,6 +3,8 @@
 и функции их выполнения.
 """
 
+import ast
+import re
 import chardet
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -194,6 +196,55 @@ def read_file(path: str) -> str:
         return f"Error reading file: {e}"
 
 
+def _defined_names(source: str) -> set:
+    """Вернуть имена всех def/class верхнего и вложенного уровней в source."""
+    try:
+        tree = ast.parse(source)
+        return {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+    except SyntaxError:
+        return set(re.findall(r'^(?:def|class)\s+(\w+)', source, re.MULTILINE))
+
+
+def _strip_duplicate_definitions(existing: str, content: str) -> str:
+    """Удалить из content блоки def/class, уже присутствующие в existing."""
+    duplicate_names = _defined_names(existing) & _defined_names(content)
+    if not duplicate_names:
+        return content
+
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content
+
+    lines = content.splitlines(keepends=True)
+    # Собираем диапазоны строк (1-based) блоков, которые нужно удалить
+    remove_ranges: list = []
+    top_level = [
+        node for node in ast.iter_child_nodes(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name in duplicate_names
+    ]
+    for node in top_level:
+        start = node.lineno - 1          # 0-based
+        end = node.end_lineno            # exclusive 0-based
+        # Захватываем декораторы, если есть
+        if node.decorator_list:
+            start = node.decorator_list[0].lineno - 1
+        remove_ranges.append((start, end))
+
+    # Помечаем строки на удаление
+    remove_lines = set()
+    for start, end in remove_ranges:
+        remove_lines.update(range(start, end))
+
+    kept = [line for i, line in enumerate(lines) if i not in remove_lines]
+    return "".join(kept).strip("\n")
+
+
 def write_file(path: str, content: str, mode: str = "w") -> str:
     """Записать content в файл. Режим: 'w' — перезапись, 'a' — добавление."""
     try:
@@ -202,12 +253,19 @@ def write_file(path: str, content: str, mode: str = "w") -> str:
         file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         encoding = "utf-8"
+        existing_source = ""
         if file_path.exists():
             raw_data = file_path.read_bytes()
             detection = chardet.detect(raw_data)
             detected = (detection.get("encoding") or "utf-8").lower()
             # ascii is a subset of utf-8; treat it as utf-8 to support non-ASCII content
             encoding = "utf-8" if detected == "ascii" else detected
+            existing_source = raw_data.decode(encoding, errors="replace")
+
+        if mode == "a" and existing_source:
+            content = _strip_duplicate_definitions(existing_source, content)
+            content = "\n\n" + content if content else ""
+
         with open(file_path, mode, encoding=encoding, errors="replace") as f:
             f.write(content)
         action = "Appended to" if mode == "a" else "Wrote to"
