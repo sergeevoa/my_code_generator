@@ -1,10 +1,10 @@
 """
 Core benchmark loop and result aggregation.
 
-run_benchmark(mode)  — async entry point; drives the full or debug run,
-                        writes raw JSONL + summary JSON, handles resume.
+run_benchmark(mode, trace_debug)  — async entry point; drives the full or debug run,
+                                    writes raw JSONL + summary JSON, handles resume.
 
-compute_summary()    — reads a completed raw JSONL and produces aggregated metrics.
+compute_summary()                 — reads a completed raw JSONL and produces aggregated metrics.
 """
 
 import json
@@ -49,28 +49,34 @@ def compute_summary(raw_file: Path, mode: str) -> Dict[str, Any]:
     n = len(task_records)
     passed = sum(1 for r in task_records if r["passed"])
 
-    def _avg(dotted_key: str) -> float:
-        keys = dotted_key.split(".")
+    def _avg(dotted_key: str, default: float = 0.0) -> float:
+        keys = keys = dotted_key.split(".")
         total = 0.0
+        count = 0
         for rec in task_records:
-            val: Any = rec
-            for k in keys:
-                val = val[k]
-            total += float(val)
-        return total / n
+            try:
+                val: Any = rec
+                for k in keys:
+                    val = val[k]
+                total += float(val)
+                count += 1
+            except (KeyError, TypeError):
+                pass
+        return total / count if count else default
 
     return {
         "mode":         mode,
         "total_tasks":  n,
         "passed_tasks": passed,
         "metrics": {
-            "pass@1":                round(passed / n,                    4),
-            "avg_iterations":        round(_avg("iterations"),            2),
-            "avg_completion_tokens": round(_avg("completion_tokens"),     1),
-            "avg_wall_time_s":       round(_avg("wall_time_s"),           2),
-            "avg_vram_peak_mb":      round(_avg("resources.vram_peak_mb"), 1),
-            "avg_vram_delta_mb":     round(_avg("resources.vram_delta_mb"), 1),
-            "avg_gpu_util_pct":      round(_avg("resources.gpu_util_avg_pct"), 1),
+            "pass@1":                  round(passed / n,                         4),
+            "avg_iterations":          round(_avg("iterations"),                 2),
+            "avg_trace_iterations":    round(_avg("trace_iterations"),           2),
+            "avg_completion_tokens":   round(_avg("completion_tokens"),          1),
+            "avg_wall_time_s":         round(_avg("wall_time_s"),                2),
+            "avg_vram_peak_mb":        round(_avg("resources.vram_peak_mb"),     1),
+            "avg_vram_delta_mb":       round(_avg("resources.vram_delta_mb"),    1),
+            "avg_gpu_util_pct":        round(_avg("resources.gpu_util_avg_pct"), 1),
         },
     }
 
@@ -79,7 +85,7 @@ def compute_summary(raw_file: Path, mode: str) -> Dict[str, Any]:
 # Main benchmark loop
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_benchmark(mode: str) -> None:
+async def run_benchmark(mode: str, trace_debug: bool = False) -> None:
     """
     Run the HumanEval benchmark in the chosen mode and persist results.
 
@@ -89,7 +95,13 @@ async def run_benchmark(mode: str) -> None:
 
     mode="full"
         Runs all 164 tasks.  On restart, automatically skips tasks that have
-        already been recorded in ``.humaneval_full_checkpoint.json``.
+        already been recorded in the checkpoint file.
+
+    trace_debug=True
+        Enables the B1+trace ablation: every failed execute_code call is
+        augmented with an execution trace from AST-instrumented re-run.
+        Output files get a ``_trace`` suffix to keep B1 and B1+trace results
+        in separate files.
     """
 
     # ── Load dataset ──────────────────────────────────────────────────────────
@@ -98,6 +110,9 @@ async def run_benchmark(mode: str) -> None:
 
     # ── Ensure output directory exists ───────────────────────────────────────
     RESULTS_DIR.mkdir(exist_ok=True)
+
+    # File suffix separates B1 (plain) from B1+trace runs
+    trace_suffix = "_trace" if trace_debug else ""
 
     # ── Select tasks and resolve file paths ───────────────────────────────────
     checkpoint_file: Optional[Path]
@@ -109,15 +124,15 @@ async def run_benchmark(mode: str) -> None:
         checkpoint_file = None
         completed_ids   = set()
         fresh_start     = True
-        raw_file     = RESULTS_DIR / "humaneval_debug_raw.jsonl"
-        summary_file = RESULTS_DIR / "humaneval_debug_summary.json"
+        raw_file     = RESULTS_DIR / f"humaneval_debug{trace_suffix}_raw.jsonl"
+        summary_file = RESULTS_DIR / f"humaneval_debug{trace_suffix}_summary.json"
         print(f"[DEBUG] Running 3 tasks — indices {indices}", flush=True)
 
     else:  # full
         selected_tasks  = all_tasks
-        checkpoint_file = RESULTS_DIR / ".humaneval_full_checkpoint.json"
-        raw_file        = RESULTS_DIR / "humaneval_full_raw.jsonl"
-        summary_file    = RESULTS_DIR / "humaneval_full_summary.json"
+        checkpoint_file = RESULTS_DIR / f".humaneval_full{trace_suffix}_checkpoint.json"
+        raw_file        = RESULTS_DIR / f"humaneval_full{trace_suffix}_raw.jsonl"
+        summary_file    = RESULTS_DIR / f"humaneval_full{trace_suffix}_summary.json"
         completed_ids   = set()
         fresh_start     = True
 
@@ -138,6 +153,9 @@ async def run_benchmark(mode: str) -> None:
         if fresh_start:
             print(f"[FULL] Starting fresh — {total} tasks total.", flush=True)
 
+    if trace_debug:
+        print("[CONFIG] Trace-augmented debugging enabled (B1+trace).", flush=True)
+
     # ── Create client ─────────────────────────────────────────────────────────
     client = TrackingLlamaClient(model=MODEL, base_url=BASE_URL)
 
@@ -157,6 +175,7 @@ async def run_benchmark(mode: str) -> None:
         run_info: Dict[str, Any] = dict(RUN_INFO_TEMPLATE)
         run_info["mode"]                    = mode.upper()
         run_info["model"]                   = MODEL
+        run_info["trace_debug"]             = trace_debug
         run_info["vram_after_model_load_mb"] = round(vram_baseline_mb, 1)
         with open(raw_file, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(run_info, ensure_ascii=False) + "\n")
@@ -165,7 +184,7 @@ async def run_benchmark(mode: str) -> None:
     tasks_run = 0
     tasks_passed = 0
     n_selected = len(selected_tasks)
-    initial_completed = len(completed_ids)  # snapshot before the loop; completed_ids grows during run
+    initial_completed = len(completed_ids)
 
     try:
         for task in selected_tasks:
@@ -180,28 +199,26 @@ async def run_benchmark(mode: str) -> None:
             print(f"\n[TASK] {task_id}  ({done_so_far}/{n_selected})", flush=True)
 
             # ── Resource monitoring ───────────────────────────────────────────────
-            vram_before_task = get_vram_used_mb()   # per-task baseline (right before inference)
+            vram_before_task = get_vram_used_mb()
             monitor = ResourceMonitor()
             monitor.start()
             t_start = time.monotonic()
 
             # ── Run agent ─────────────────────────────────────────────────────────
-            agent_result = await run_agent_for_eval(client, task, container=container)
+            agent_result = await run_agent_for_eval(
+                client, task, container=container, trace_debug=trace_debug,
+            )
 
             # ── Independent HumanEval verification ───────────────────────────────
             passed, error_type = verify_solution(
                 agent_result["final_completion"] or "", task, container=container
             )
-            # Prefer agent-level error if verification found no solution
             if not passed and not error_type and agent_result["agent_error_type"]:
                 error_type = agent_result["agent_error_type"]
 
             wall_time_s = round(time.monotonic() - t_start, 2)
 
             # ── Collect resource readings ─────────────────────────────────────────
-            # vram_delta_mb: peak VRAM during the task minus VRAM right before it
-            # started — shows actual per-task allocation (e.g. KV-cache growth).
-            # Can be negative if the server released memory; we report the raw value.
             resources = monitor.stop()
             resources["vram_delta_mb"] = round(
                 resources["vram_peak_mb"] - vram_before_task, 1
@@ -213,6 +230,7 @@ async def run_benchmark(mode: str) -> None:
                 "task_id":           task_id,
                 "passed":            passed,
                 "iterations":        agent_result["iterations"],
+                "trace_iterations":  agent_result.get("trace_iterations", 0),
                 "error_type":        error_type,
                 "prompt_tokens":     agent_result["prompt_tokens"],
                 "completion_tokens": agent_result["completion_tokens"],
@@ -243,10 +261,14 @@ async def run_benchmark(mode: str) -> None:
                 tasks_passed += 1
 
             status = "PASS" if passed else "FAIL"
+            trace_info = (
+                f"  trace_iters={record['trace_iterations']}" if trace_debug else ""
+            )
             print(
                 f"  [{status}]  "
-                f"iters={record['iterations']}  "
-                f"tokens={record['completion_tokens']}  "
+                f"iters={record['iterations']}"
+                + trace_info
+                + f"  tokens={record['completion_tokens']}  "
                 f"time={record['wall_time_s']}s  "
                 f"vram_peak={resources['vram_peak_mb']:.0f} MB"
                 + (f"  error={error_type}" if error_type else ""),
@@ -267,15 +289,21 @@ async def run_benchmark(mode: str) -> None:
     print(f"  {'─' * 50}")
     print(f"  {'Metric':<36}  {'Value':>10}")
     print(f"  {'─' * 50}")
-    for label, key in [
-        ("pass@1",                    "pass@1"),
-        ("Avg. iterations",           "avg_iterations"),
-        ("Avg. completion tokens",    "avg_completion_tokens"),
-        ("Avg. wall time (s)",        "avg_wall_time_s"),
-        ("Avg. VRAM peak (MB)",       "avg_vram_peak_mb"),
-        ("Avg. VRAM Δ over baseline", "avg_vram_delta_mb"),
-        ("Avg. GPU utilization (%)",  "avg_gpu_util_pct"),
-    ]:
+
+    metrics_to_print = [
+        ("pass@1",                       "pass@1"),
+        ("Avg. iterations",              "avg_iterations"),
+        ("Avg. trace iterations",        "avg_trace_iterations"),
+        ("Avg. completion tokens",       "avg_completion_tokens"),
+        ("Avg. wall time (s)",           "avg_wall_time_s"),
+        ("Avg. VRAM peak (MB)",          "avg_vram_peak_mb"),
+        ("Avg. VRAM Δ over baseline",    "avg_vram_delta_mb"),
+        ("Avg. GPU utilization (%)",     "avg_gpu_util_pct"),
+    ]
+    for label, key in metrics_to_print:
+        # Skip trace metric line if trace was not used (keeps output clean)
+        if key == "avg_trace_iterations" and not trace_debug:
+            continue
         print(f"  {label:<36}  {m.get(key, 'N/A'):>10}")
     print(sep)
     print(f"\n  Raw data  → {raw_file.name}")
