@@ -23,6 +23,10 @@ BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8080/v1")
 # ── Agent behaviour ───────────────────────────────────────────────────────────
 MAX_REACT_STEPS = int(os.getenv("MAX_REACT_STEPS", "8"))
 
+# Trace-augmented self-debugging (B1+trace ablation).
+# Set TRACE_DEBUG=1 in .env or pass --trace-debug on the CLI to enable.
+TRACE_DEBUG: bool = os.getenv("TRACE_DEBUG", "0").strip().lower() in ("1", "true", "yes")
+
 # ── Hardware metadata (written into run_info once per run) ────────────────────
 HARDWARE: Dict[str, Any] = {
     "gpu":           os.getenv("HW_GPU",            "NVIDIA RTX 4090"),

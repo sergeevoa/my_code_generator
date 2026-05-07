@@ -6,6 +6,10 @@ Usage:
     python run_humaneval.py --mode debug   # 3 tasks: first, middle, last
     python run_humaneval.py --mode full    # all 164 tasks (auto-resumable)
 
+    use --trace-debug to enable trace augmented self debugging. Example:
+    python run_humaneval.py --mode debug --trace-debug
+    python run_humaneval.py --mode full --trace-debug
+
 Alternatively, invoke the package directly:
     python -m run_humaneval --mode debug
 """

@@ -6,6 +6,13 @@ run_agent_for_eval() drives the ReACT cycle with a reduced tool set
 instead of printing them so the benchmark loop can record everything.
 
 extract_code() parses the function out of the agent's final respond_to_user message.
+
+Trace-augmented self-debugging (B1+trace):
+    When trace_debug=True, every failed execute_code call is followed by a
+    second sandbox run of the AST-instrumented version of the same code.
+    The resulting execution trace (variable values at each step) is appended
+    to the tool result so the model can pinpoint the exact divergence.
+    trace_iterations counts how many times the trace was successfully attached.
 """
 
 import json
@@ -20,6 +27,7 @@ from context_manager import compact_history  # available via sys.path set in __i
 from .client import TrackingLlamaClient
 from .config import MAX_REACT_STEPS
 from .prompts import EVAL_SYSTEM_PROMPT, EVAL_TOOLS
+from .trace_instrumenter import instrument, extract_and_compress_trace
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +67,33 @@ def extract_code(response: str) -> Optional[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Trace-augmented execution helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Error prefixes that indicate infrastructure / security failures — traces
+# would be uninformative in these cases, so we skip instrumentation.
+_SKIP_TRACE_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
+
+
+def _run_with_trace(code: str, container: SandboxContainer) -> Optional[str]:
+    """
+    Instrument *code*, execute it in *container*, extract and compress the trace.
+
+    Returns a compact trace string ready for inclusion in the model's context,
+    or None if instrumentation failed or the trace was empty.
+
+    validate=False is used because the original code already passed AST
+    validation; the instrumented version only adds __trace_log__ calls.
+    """
+    instrumented = instrument(code)
+    if instrumented is None:
+        return None
+
+    _, instr_output = container.execute(instrumented, validate=False)
+    return extract_and_compress_trace(instr_output)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Agent loop
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -67,13 +102,20 @@ async def run_agent_for_eval(
     task: Dict[str, Any],
     container: SandboxContainer,
     max_tokens: int = 4096,
+    trace_debug: bool = False,
 ) -> Dict[str, Any]:
     """
     Run the ReACT agent on a single HumanEval task and collect metrics.
 
+    Args:
+        trace_debug: When True, failed execute_code calls are followed by an
+                     instrumented re-run and the resulting trace is appended
+                     to the tool result (B1+trace ablation).
+
     Returns:
         final_completion  : str | None  — Python function extracted from the agent's answer
         iterations        : int         — number of execute_code calls (solve attempts)
+        trace_iterations  : int         — number of times a trace was successfully attached
         prompt_tokens     : int         — accumulated LLM prompt tokens across all steps
         completion_tokens : int         — accumulated LLM completion tokens
         agent_error_type  : str | None  — set when the agent loop itself fails
@@ -87,17 +129,14 @@ async def run_agent_for_eval(
     ]
 
     iterations = 0
+    trace_iterations = 0
     total_prompt_tokens = 0
     total_completion_tokens = 0
     final_completion: Optional[str] = None
     agent_error_type: Optional[str] = None
 
     for _step in range(MAX_REACT_STEPS):
-        # ── Компрессия контекста перед запросом к LLM ────────────────────────
-        # max_response_tokens совпадает с max_tokens ниже — одна переменная
-        # используется в обоих местах, поэтому они гарантированно синхронны.
-        # В eval-режиме скользящее окно не сработает (всего один user-ход),
-        # но проход 1 обрежет длинные выводы execute_code внутри задачи.
+        # ── Context compaction before LLM call ───────────────────────────────
         compact_history(history, max_response_tokens=max_tokens)
 
         tool_calls_received: List[Dict[str, Any]] = []
@@ -110,15 +149,12 @@ async def run_agent_for_eval(
                 temperature=0.2,
             ):
                 if event["type"] == "tool_use":
-                    # Cast required: Pylance infers event values as str|Unknown
-                    # because the generator also yields text events with str values.
                     tool_calls_received.append(cast(Dict[str, Any], event["tool_call"]))
         except Exception as exc:
             agent_error_type = "agent_error"
             print(f"\n  [agent error] {exc}", file=sys.stderr)
             break
         finally:
-            # Usage is set on the client after the generator finishes
             total_prompt_tokens    += client._last_prompt_tokens
             total_completion_tokens += client._last_completion_tokens
 
@@ -147,9 +183,29 @@ async def run_agent_for_eval(
 
             if func_name == "execute_code":
                 iterations += 1
-                success, output = container.execute(func_args.get("code", ""))
+                code = func_args.get("code", "")
+                success, output = container.execute(code)
                 prefix = "[OK]" if success else "[ERROR]"
                 result = f"{prefix}\n{output}"
+
+                # ── Trace-augmented debugging ─────────────────────────────
+                # Only run when: test failed + trace mode enabled +
+                # failure is a genuine logic error (not infra / security).
+                if (
+                    trace_debug
+                    and not success
+                    and not any(output.startswith(p) for p in _SKIP_TRACE_PREFIXES)
+                ):
+                    trace = _run_with_trace(code, container)
+                    if trace:
+                        trace_iterations += 1
+                        result += (
+                            "\n\n--- EXECUTION TRACE ---\n"
+                            + trace
+                            + "\n--- END TRACE ---\n"
+                            "\nAnalyze the trace above: find the line where the actual "
+                            "value diverges from what is expected, then fix the implementation."
+                        )
             else:
                 result = (
                     f"Error: tool '{func_name}' is not available during evaluation."
@@ -167,6 +223,7 @@ async def run_agent_for_eval(
     return {
         "final_completion":   final_completion,
         "iterations":         iterations,
+        "trace_iterations":   trace_iterations,
         "prompt_tokens":      total_prompt_tokens,
         "completion_tokens":  total_completion_tokens,
         "agent_error_type":   agent_error_type,
