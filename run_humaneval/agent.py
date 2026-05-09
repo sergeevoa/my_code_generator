@@ -137,7 +137,7 @@ async def run_agent_for_eval(
 
     for _step in range(MAX_REACT_STEPS):
         # ── Context compaction before LLM call ───────────────────────────────
-        compact_history(history, max_response_tokens=max_tokens)
+        await compact_history(history, max_response_tokens=max_tokens)
 
         tool_calls_received: List[Dict[str, Any]] = []
 
