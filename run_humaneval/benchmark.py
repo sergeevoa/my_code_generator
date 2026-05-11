@@ -18,7 +18,7 @@ from sandbox.executor import SandboxContainer  # available via sys.path set in _
 
 from .agent import run_agent_for_eval
 from .client import TrackingLlamaClient
-from .config import MODEL, BASE_URL, RESULTS_DIR, RUN_INFO_TEMPLATE
+from .config import MODEL, BASE_URL, RESULTS_DIR, RUN_INFO_TEMPLATE, MAX_TOKENS
 from .dataset import load_humaneval
 from .monitor import ResourceMonitor, get_vram_used_mb
 from .verifier import verify_solution
@@ -206,7 +206,8 @@ async def run_benchmark(mode: str, trace_debug: bool = False) -> None:
 
             # ── Run agent ─────────────────────────────────────────────────────────
             agent_result = await run_agent_for_eval(
-                client, task, container=container, trace_debug=trace_debug,
+                client, task, container=container,
+                max_tokens=MAX_TOKENS, trace_debug=trace_debug,
             )
 
             # ── Independent HumanEval verification ───────────────────────────────

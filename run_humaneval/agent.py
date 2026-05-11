@@ -22,8 +22,6 @@ from typing import Any, Dict, List, Optional, cast
 
 from sandbox.executor import SandboxContainer  # available via sys.path set in __init__
 
-from context_manager import compact_history  # available via sys.path set in __init__
-
 from .client import TrackingLlamaClient
 from .config import MAX_REACT_STEPS
 from .prompts import EVAL_SYSTEM_PROMPT, EVAL_TOOLS
@@ -136,9 +134,6 @@ async def run_agent_for_eval(
     agent_error_type: Optional[str] = None
 
     for _step in range(MAX_REACT_STEPS):
-        # ── Context compaction before LLM call ───────────────────────────────
-        await compact_history(history, max_response_tokens=max_tokens)
-
         tool_calls_received: List[Dict[str, Any]] = []
 
         try:

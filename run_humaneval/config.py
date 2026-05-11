@@ -22,6 +22,10 @@ BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8080/v1")
 
 # ── Agent behaviour ───────────────────────────────────────────────────────────
 MAX_REACT_STEPS = int(os.getenv("MAX_REACT_STEPS", "8"))
+# Max tokens the model may generate per step. Must be < n_ctx_slot on the server.
+# For --parallel 4 -c 16384 (slot=4096): set MAX_TOKENS=2048.
+# For --parallel 4 -c 32768 (slot=8192) or no parallel: default 4096 is fine.
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 
 # Trace-augmented self-debugging (B1+trace ablation).
 # Set TRACE_DEBUG=1 in .env or pass --trace-debug on the CLI to enable.
