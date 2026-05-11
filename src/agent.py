@@ -10,8 +10,12 @@ _CODE_EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', 
 from system_prompt import build_system_prompt
 from tools import TOOLS, execute_tool
 from context_manager import compact_history
+from trace_instrumenter import instrument, extract_and_compress_trace
 
 MAX_REACT_STEPS = 8
+
+# Output prefixes that indicate infra / security failures — no point tracing these.
+_SKIP_TRACE_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
 
 
 def _auto_save_session_memory(
@@ -62,6 +66,23 @@ def ensure_system_in_history(history: List[Dict[str, str]], system_prompt: str) 
         history.insert(0, {"role": "system", "content": system_prompt})
 
 
+def _run_with_trace(code: str, container) -> Optional[str]:
+    """
+    Instrument *code*, run it in *container*, extract and compress the trace.
+
+    Returns a compact trace string, or None if instrumentation failed or
+    the sandbox produced no trace markers.
+
+    validate=False is used because the original code already passed AST
+    validation; the instrumented version only adds __trace_log__ calls.
+    """
+    instrumented = instrument(code)
+    if instrumented is None:
+        return None
+    _, instr_output = container.execute(instrumented, validate=False)
+    return extract_and_compress_trace(instr_output)
+
+
 async def run_agent_async(
     client,
     user_message: str,
@@ -80,6 +101,9 @@ async def run_agent_async(
 
     Логика агента становится единообразной: всегда читаем tool_calls,
     ветвление идёт только по имени функции.
+
+    Trace-augmented debugging включён всегда: каждый провалившийся execute_code
+    дополняется трассой выполнения из AST-инструментированного кода.
     """
     if conversation_history is None:
         conversation_history = []
@@ -107,8 +131,6 @@ async def run_agent_async(
     for step in range(max_react_steps):
 
         # ── Компрессия контекста перед запросом к LLM ────────────────────────
-        # max_response_tokens совпадает с max_tokens ниже — одна переменная
-        # используется в обоих местах, поэтому они гарантированно синхронны.
         await compact_history(conversation_history, max_response_tokens=max_tokens, summarizer=_summarizer)
 
         # ── Таймер ожидания первого токена ──────────────────────────────────
@@ -201,8 +223,33 @@ async def run_agent_async(
 
             # Рабочий инструмент — выполняем и возвращаем результат модели
             result = execute_tool(func_name, func_args, working_dir, container=container)
+
             if func_name == "execute_code" and result.startswith("[OK]"):
                 execute_code_passed = True
+
+            # ── Trace-augmented debugging ────────────────────────────────────
+            # Если execute_code вернул [ERROR] и трассировка включена —
+            # запускаем инструментированную версию и добавляем трассу к ответу.
+            # Пропускаем инфраструктурные / sandbox-ошибки: там трасса бесполезна.
+            if (
+                func_name == "execute_code"
+                and result.startswith("[ERROR]")
+                and container is not None
+            ):
+                # Часть после "[ERROR]\n" — это сырой вывод sandbox
+                raw_output = result.split("\n", 1)[1] if "\n" in result else ""
+                if not any(raw_output.startswith(p) for p in _SKIP_TRACE_PREFIXES):
+                    trace = _run_with_trace(func_args.get("code", ""), container)
+                    if trace:
+                        result += (
+                            "\n\n--- EXECUTION TRACE ---\n"
+                            + trace
+                            + "\n--- END TRACE ---\n"
+                            "\nAnalyze the trace above: find the line where the actual "
+                            "value diverges from what is expected, then fix the implementation."
+                        )
+                        print("[TRACE] Execution trace attached to error.", file=sys.stderr)
+
             if func_name == "update_session_memory":
                 session_memory_saved = True
             print(f"[TOOL] {func_name}({func_args})", file=sys.stderr)

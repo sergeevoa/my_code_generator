@@ -25,7 +25,7 @@ from sandbox.executor import SandboxContainer  # available via sys.path set in _
 from .client import TrackingLlamaClient
 from .config import MAX_REACT_STEPS
 from .prompts import EVAL_SYSTEM_PROMPT, EVAL_TOOLS
-from .trace_instrumenter import instrument, extract_and_compress_trace
+from trace_instrumenter import instrument, extract_and_compress_trace
 
 
 # ─────────────────────────────────────────────────────────────────────────────
