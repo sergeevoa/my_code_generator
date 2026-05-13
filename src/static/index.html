@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Generator Agent</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #fff;
+  color: #000;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top bar ────────────────────────────────────────────────────────────────── */
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: none;
+  flex-shrink: 0;
+}
+
+/* Left pill: icon buttons grouped */
+#btn-group {
+  display: flex;
+  align-items: center;
+  background: #f0f0f0;
+  border-radius: 999px;
+  padding: 4px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #000;
+}
+.icon-btn svg { display: block; }
+.icon-btn:hover { background: rgba(0,0,0,0.1); }
+
+/* ── Content area (sidebar + page) ─────────────────────────────────────────── */
+#content-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Sidebar ────────────────────────────────────────────────────────────────── */
+#sidebar {
+  width: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #fafafa;
+  border-right: 0px solid #ddd;
+  transition: width 0.22s ease, border-right-width 0.22s ease;
+  align-self: stretch;
+}
+#sidebar.open {
+  width: 240px;
+  border-right-width: 1px;
+}
+.sidebar-inner {
+  width: 240px;
+  height: 100%;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sidebar-section-label {
+  font-size: 18px;
+  font-weight: 700;
+  color: #000;
+}
+#sidebar-model-name {
+  font-size: 16px;
+  color: #000;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+/* ── Page content (settings + chat) ────────────────────────────────────────── */
+#page-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Right pill: working directory */
+#workdir-pill {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1.5px solid #ccc;
+  border-radius: 16px;
+  padding: 5px 6px 5px 16px;
+  background: #fff;
+  min-width: 0;
+  flex: 1;
+  max-width: 700px;
+}
+.workdir-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #000;
+  line-height: 1;
+  margin-bottom: 3px;
+  pointer-events: none;
+}
+.workdir-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+#workdir-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: #000;
+  outline: none;
+  min-width: 0;
+  padding: 0;
+}
+#browse-btn {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #555;
+  border-radius: 50%;
+}
+#browse-btn:hover { color: #000; background: rgba(0,0,0,0.08); }
+#browse-btn svg { display: block; }
+
+/* ── Settings panel ─────────────────────────────────────────────────────────── */
+#settings-panel {
+  display: none;
+  flex-direction: column;
+  gap: 0;
+  background: #fafafa;
+  overflow-y: auto;
+}
+#settings-panel.open {
+  display: flex;
+  flex: 1;
+}
+
+.settings-inner {
+  padding: 40px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  max-width: 760px;
+  width: 100%;
+}
+
+#settings-panel h3 {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.setting-row label {
+  font-size: 16px;
+  font-weight: 500;
+}
+.hint {
+  font-size: 13px;
+  color: #555;
+}
+.hint-warn {
+  font-size: 13px;
+  color: #a07000;
+}
+.setting-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.setting-controls input[type=number] {
+  width: 140px;
+  border: 1px solid #000;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 16px;
+  color: #000;
+  background: #fff;
+  outline: none;
+}
+.reset-btn {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #000;
+}
+.reset-btn:hover { background: #f0f0f0; }
+
+#apply-settings-btn {
+  align-self: flex-start;
+  padding: 12px 32px;
+  border: none;
+  border-radius: 6px;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+#apply-settings-btn:hover:not(:disabled) { background: #222; }
+#apply-settings-btn:disabled {
+  background: #000;
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* ── Main content ───────────────────────────────────────────────────────────── */
+#main-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 14px 20px;
+  gap: 12px;
+  align-items: center;
+}
+
+/* ── Chatbot ────────────────────────────────────────────────────────────────── */
+#chatbox {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 800px;
+}
+
+.msg {
+  max-width: 70%;
+  font-size: 15px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.msg.user {
+  align-self: flex-end;
+  background: #efefef;
+  color: #000;
+  padding: 10px 16px;
+  border-radius: 18px;
+  white-space: pre-wrap;
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: transparent;
+  color: #000;
+  padding: 4px 0;
+  max-width: 90%;
+}
+
+/* markdown-rendered assistant content */
+.msg.assistant h1,.msg.assistant h2,.msg.assistant h3 { margin: 10px 0 4px; font-weight: 600; }
+.msg.assistant p { margin: 4px 0; }
+.msg.assistant pre {
+  background: #e8e8e8;
+  border-radius: 4px;
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.msg.assistant code {
+  background: #e8e8e8;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 13px;
+}
+.msg.assistant pre code { background: none; padding: 0; }
+.msg.assistant ul,.msg.assistant ol { padding-left: 22px; margin: 4px 0; }
+.msg.assistant hr { border: none; border-top: 1px solid #ccc; margin: 10px 0; }
+
+.steps-log {
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 8px;
+}
+.steps-log strong { color: #000; }
+.thinking { font-style: italic; color: #888; }
+
+/* ── Input row ──────────────────────────────────────────────────────────────── */
+#input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  width: 100%;
+  max-width: 800px;
+}
+#msg-input {
+  flex: 1;
+  border: 1px solid #000;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 15px;
+  resize: none;
+  min-height: 44px;
+  max-height: 150px;
+  overflow-y: auto;
+  line-height: 1.45;
+  outline: none;
+  font-family: inherit;
+}
+#send-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: #000;
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0 3px 0;
+  flex-shrink: 0;
+}
+#send-btn:hover { background: #222; }
+#send-btn:disabled { background: #ccc; cursor: default; }
+#send-btn.running {
+  padding: 0;
+  font-size: 0;
+}
+#send-btn.running::before {
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 2px;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ──────────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <!-- Left pill: sidebar + settings -->
+  <div id="btn-group">
+    <button id="sidebar-toggle" class="icon-btn" title="Боковая панель">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1.5" y="2.5" width="17" height="15" rx="1.5" stroke="#000" stroke-width="1.5"/>
+        <line x1="7.5" y1="2.5" x2="7.5" y2="17.5" stroke="#000" stroke-width="1.5"/>
+        <rect x="1.5" y="2.5" width="6" height="15" rx="1.5" fill="#000"/>
+      </svg>
+    </button>
+    <button id="settings-btn" class="icon-btn" title="Настройки">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#000" d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.36.07-.73.07-1.08s-.03-.73-.07-1.08l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.35-.07.72-.07 1.08s.03.73.07 1.08L2.46 14.37c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65z"/>
+      </svg>
+    </button>
+  </div>
+  <!-- Right pill: working directory -->
+  <div id="workdir-pill">
+    <span class="workdir-label">Рабочая директория</span>
+    <div class="workdir-row">
+      <input id="workdir-input" type="text" placeholder="Путь к директории проекта…">
+      <button id="browse-btn" title="Выбрать директорию">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Content area ─────────────────────────────────────────────────────────── -->
+<div id="content-area">
+
+<!-- ── Sidebar ──────────────────────────────────────────────────────────────── -->
+<div id="sidebar">
+  <div class="sidebar-inner">
+    <div class="sidebar-section-label">Модель</div>
+    <div id="sidebar-model-name">…</div>
+  </div>
+</div>
+
+<!-- ── Page content ─────────────────────────────────────────────────────────── -->
+<div id="page-content">
+
+<!-- ── Settings panel ───────────────────────────────────────────────────────── -->
+<div id="settings-panel">
+  <div class="settings-inner">
+    <h3>Настройки агента</h3>
+
+    <div class="setting-row">
+      <label>Максимальное количество шагов агента (от 1 до 20)</label>
+      <div class="setting-controls">
+        <input id="max-steps" type="number" min="1" max="20" step="1">
+        <button class="reset-btn" data-target="max-steps" title="Сбросить">↺</button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <label id="tokens-label">Максимальное количество токенов за шаг</label>
+      <div id="ctx-hint"></div>
+      <div class="setting-controls">
+        <input id="max-tokens" type="number" min="256" step="1">
+        <button class="reset-btn" data-target="max-tokens" title="Сбросить">↺</button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <label>Температура генерации (от 0,0 до 1,5; рекомендуется 0,1–0,3 для кода)</label>
+      <div class="setting-controls">
+        <input id="temperature" type="number" min="0" max="1.5" step="0.01">
+        <button class="reset-btn" data-target="temperature" title="Сбросить">↺</button>
+      </div>
+    </div>
+
+    <button id="apply-settings-btn" disabled>Применить</button>
+  </div>
+</div>
+
+<!-- ── Main content ──────────────────────────────────────────────────────────── -->
+<div id="main-col">
+  <div id="chatbox"></div>
+  <div id="input-row">
+    <textarea id="msg-input" rows="1" placeholder="Введите сообщение…"></textarea>
+    <button id="send-btn" title="Отправить">↑</button>
+  </div>
+</div>
+
+</div><!-- #page-content -->
+</div><!-- #content-area -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let agentHistory = [];
+
+// "applied" = values actually used by the chat; populated after init()
+let applied = { maxSteps: 8, maxTokens: 4096, temperature: 0.2 };
+// default values for reset buttons
+let defaults = { maxSteps: 8, maxTokens: 4096, temperature: 0.2 };
+
+// ── Init: fetch server info ────────────────────────────────────────────────────
+async function init() {
+  try {
+    const r = await fetch("/info");
+    const d = await r.json();
+    document.getElementById("sidebar-model-name").textContent = d.model;
+    document.getElementById("workdir-input").value = d.default_working_dir;
+    document.getElementById("max-tokens").max = d.token_max;
+    document.getElementById("tokens-label").textContent =
+      `Максимальное количество токенов за шаг (от 256 до ${d.token_max})`;
+
+    const hintEl = document.getElementById("ctx-hint");
+    if (d.n_ctx_slot) {
+      hintEl.className = "hint";
+      hintEl.textContent = `Ограничение сервера: не более ${d.n_ctx_slot} токенов на запрос.`;
+    } else {
+      hintEl.className = "hint-warn";
+      hintEl.textContent = "⚠ Не удалось определить ограничение сервера. Если значение слишком большое — сервер вернёт ошибку.";
+    }
+
+    defaults = {
+      maxSteps: d.default_max_steps,
+      maxTokens: d.default_max_tokens,
+      temperature: d.default_temperature,
+    };
+    applied = { ...defaults };
+
+    // Set input values to match applied
+    _restoreInputsFromApplied();
+  } catch (e) {
+    console.error("Failed to fetch /info:", e);
+  }
+}
+
+// ── Settings inputs helpers ────────────────────────────────────────────────────
+function _restoreInputsFromApplied() {
+  document.getElementById("max-steps").value = applied.maxSteps;
+  document.getElementById("max-tokens").value = applied.maxTokens;
+  document.getElementById("temperature").value = applied.temperature;
+  _updateApplyBtn();
+}
+
+function _pendingValues() {
+  return {
+    maxSteps: parseFloat(document.getElementById("max-steps").value),
+    maxTokens: parseFloat(document.getElementById("max-tokens").value),
+    temperature: parseFloat(document.getElementById("temperature").value),
+  };
+}
+
+function _hasChanges() {
+  const p = _pendingValues();
+  return (
+    p.maxSteps !== applied.maxSteps ||
+    p.maxTokens !== applied.maxTokens ||
+    p.temperature !== applied.temperature
+  );
+}
+
+function _updateApplyBtn() {
+  document.getElementById("apply-settings-btn").disabled = !_hasChanges();
+}
+
+// Watch all setting inputs for changes
+["max-steps", "max-tokens", "temperature"].forEach(id => {
+  document.getElementById(id).addEventListener("input", _updateApplyBtn);
+});
+
+// ── Sidebar toggle ─────────────────────────────────────────────────────────────
+document.getElementById("sidebar-toggle").addEventListener("click", () => {
+  document.getElementById("sidebar").classList.toggle("open");
+});
+
+// ── Settings toggle ────────────────────────────────────────────────────────────
+document.getElementById("settings-btn").addEventListener("click", () => {
+  const panel = document.getElementById("settings-panel");
+  const mainCol = document.getElementById("main-col");
+  if (panel.classList.contains("open")) {
+    // Close without applying — restore inputs to last applied values
+    panel.classList.remove("open");
+    mainCol.style.display = "flex";
+    _restoreInputsFromApplied();
+  } else {
+    // Open — restore inputs to current applied values
+    _restoreInputsFromApplied();
+    panel.classList.add("open");
+    mainCol.style.display = "none";
+  }
+});
+
+// Apply button — commit pending values and close panel
+document.getElementById("apply-settings-btn").addEventListener("click", () => {
+  applied = _pendingValues();
+  document.getElementById("settings-panel").classList.remove("open");
+  document.getElementById("main-col").style.display = "flex";
+  _updateApplyBtn();
+});
+
+// ── Reset buttons ──────────────────────────────────────────────────────────────
+document.querySelectorAll(".reset-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.target;
+    if (target === "max-steps") document.getElementById("max-steps").value = defaults.maxSteps;
+    if (target === "max-tokens") document.getElementById("max-tokens").value = defaults.maxTokens;
+    if (target === "temperature") document.getElementById("temperature").value = defaults.temperature;
+    _updateApplyBtn();
+  });
+});
+
+// ── Browse directory ───────────────────────────────────────────────────────────
+document.getElementById("browse-btn").addEventListener("click", async () => {
+  try {
+    const r = await fetch("/browse");
+    const d = await r.json();
+    if (d.path) document.getElementById("workdir-input").value = d.path;
+  } catch (e) {
+    console.error("Browse failed:", e);
+  }
+});
+
+// ── Auto-resize textarea ───────────────────────────────────────────────────────
+const msgInput = document.getElementById("msg-input");
+const sendBtn = document.getElementById("send-btn");
+sendBtn.disabled = true;
+
+let abortController = null;
+
+function _setSendRunning(running) {
+  if (running) {
+    sendBtn.classList.add("running");
+    sendBtn.disabled = false;
+  } else {
+    sendBtn.classList.remove("running");
+    sendBtn.disabled = !msgInput.value.trim();
+  }
+}
+
+msgInput.addEventListener("input", () => {
+  msgInput.style.height = "auto";
+  msgInput.style.height = Math.min(msgInput.scrollHeight, 150) + "px";
+  if (!abortController) sendBtn.disabled = !msgInput.value.trim();
+});
+
+// ── Send on Enter (Shift+Enter = newline) ──────────────────────────────────────
+msgInput.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (abortController) abortController.abort();
+    else sendMessage();
+  }
+});
+sendBtn.addEventListener("click", () => {
+  if (abortController) abortController.abort();
+  else sendMessage();
+});
+
+// ── Simple markdown renderer ───────────────────────────────────────────────────
+function renderMarkdown(text) {
+  text = text.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
+    `<pre><code>${escHtml(code.trim())}</code></pre>`);
+  text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${escHtml(c)}</code>`);
+  text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
+  text = text.replace(/^---+$/gm, "<hr>");
+  text = text.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  text = text.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  text = text.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  text = text.replace(/^[*-] (.+)$/gm, "<li>$1</li>");
+  text = text.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
+  text = text.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
+  text = text.replace(/(?<!>)\n(?!<)/g, "<br>");
+  return text;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// ── Chat helpers ───────────────────────────────────────────────────────────────
+function addMessage(role, html, raw) {
+  const chatbox = document.getElementById("chatbox");
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  if (role === "assistant") {
+    div.innerHTML = html;
+  } else {
+    div.textContent = raw;
+  }
+  chatbox.appendChild(div);
+  chatbox.scrollTop = chatbox.scrollHeight;
+  return div;
+}
+
+function scrollBottom() {
+  const c = document.getElementById("chatbox");
+  c.scrollTop = c.scrollHeight;
+}
+
+// ── Main send logic ────────────────────────────────────────────────────────────
+async function sendMessage() {
+  const message = msgInput.value.trim();
+  if (!message) return;
+
+  msgInput.value = "";
+  msgInput.style.height = "auto";
+
+  abortController = new AbortController();
+  _setSendRunning(true);
+
+  addMessage("user", null, message);
+  const assistantDiv = addMessage("assistant", "<span class='thinking'>Запускаю агента…</span>", null);
+
+  const stepsLog = [];
+  let doneReceived = false;
+  let aborted = false;
+
+  try {
+    const resp = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: abortController.signal,
+      body: JSON.stringify({
+        message,
+        agent_history: agentHistory,
+        working_dir: document.getElementById("workdir-input").value,
+        max_steps: applied.maxSteps,
+        max_tokens: applied.maxTokens,
+        temperature: applied.temperature,
+      }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+
+      for (const chunk of parts) {
+        if (!chunk.trim()) continue;
+        const lines = chunk.split("\n");
+        let eventType = "message";
+        let dataLine = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          if (line.startsWith("data: ")) dataLine = line.slice(6);
+        }
+        if (!dataLine) continue;
+        let payload;
+        try { payload = JSON.parse(dataLine); } catch { continue; }
+
+        if (eventType === "step") {
+          stepsLog.push(`<strong>Шаг ${payload.step}:</strong> <code>${payload.tool}</code>`);
+          assistantDiv.innerHTML =
+            `<div class='steps-log'>${stepsLog.join("<br>")}</div>` +
+            `<span class='thinking'>Думаю…</span>`;
+          scrollBottom();
+        } else if (eventType === "done") {
+          doneReceived = true;
+          agentHistory = payload.history;
+          let finalHtml = renderMarkdown(payload.text);
+          if (stepsLog.length) {
+            finalHtml = `<div class='steps-log'>${stepsLog.join("<br>")}</div><hr>` + finalHtml;
+          }
+          assistantDiv.innerHTML = finalHtml;
+          scrollBottom();
+        } else if (eventType === "error") {
+          assistantDiv.innerHTML = `<span style="color:#c00">❌ ${escHtml(payload.text)}</span>`;
+          scrollBottom();
+        }
+      }
+    }
+
+    if (!doneReceived && !aborted) {
+      assistantDiv.innerHTML += "<br><span style='color:#c00'>❌ Соединение прервано</span>";
+    }
+  } catch (e) {
+    if (e.name === "AbortError") {
+      aborted = true;
+      const prefix = stepsLog.length
+        ? `<div class='steps-log'>${stepsLog.join("<br>")}</div><hr>`
+        : "";
+      assistantDiv.innerHTML = prefix + "<span class='thinking'>Остановлено</span>";
+      scrollBottom();
+    } else {
+      assistantDiv.innerHTML = `<span style="color:#c00">❌ Ошибка: ${escHtml(String(e))}</span>`;
+    }
+  } finally {
+    abortController = null;
+    _setSendRunning(false);
+    msgInput.focus();
+  }
+}
+
+init();
+</script>
+</body>
+</html>
