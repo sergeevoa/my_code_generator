@@ -10,6 +10,8 @@ __pycache__/
 venv/
 
 *.log
+app_stdout.txt
+app_stderr.txt
 
 # IDE
 .vscode/

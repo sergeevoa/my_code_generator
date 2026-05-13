@@ -119,9 +119,11 @@ async def run_agent_async(
     conversation_history: Optional[List[Dict[str, Any]]] = None,
     max_react_steps: int = MAX_REACT_STEPS,
     max_tokens: int = 4096,
+    temperature: float = 0.2,
     working_dir: str = ".",
     container=None,
-) -> None:
+    on_tool_call=None,
+) -> Optional[str]:
     """
     ReACT-агент (Паттерн B): tool_choice="required" + no-op respond_to_user.
 
@@ -134,6 +136,10 @@ async def run_agent_async(
 
     Trace-augmented debugging включён всегда: каждый провалившийся execute_code
     дополняется трассой выполнения из AST-инструментированного кода.
+
+    on_tool_call: опциональный async-колбэк(step_num, func_name) для стриминга
+    прогресса в UI. Если None — агент работает в CLI-режиме (печатает в stdout).
+    Возвращает финальный ответ агента или None при ошибке / превышении шагов.
     """
     if conversation_history is None:
         conversation_history = []
@@ -185,7 +191,7 @@ async def run_agent_async(
                     conversation_history,
                     TOOLS,
                     max_tokens=max_tokens,
-                    temperature=0.2,
+                    temperature=temperature,
                 ):
                     if first_event:
                         ticker.cancel()
@@ -241,8 +247,12 @@ async def run_agent_async(
                 if not session_memory_saved:
                     _auto_save_session_memory(conversation_history, user_message, working_dir)
                 message = func_args.get("message", "")
-                print(message)
-                return
+                if on_tool_call is None:
+                    print(message)
+                return message
+
+            if on_tool_call is not None:
+                await on_tool_call(step + 1, func_name)
 
             # Блокируем write_file для файлов с кодом, если execute_code ещё не прошёл
             if func_name == "write_file" and not execute_code_passed:
@@ -297,8 +307,9 @@ async def run_agent_async(
 
             if result.startswith("[INFRASTRUCTURE ERROR]"):
                 print(f"\n[Agent stopped] Infrastructure error: {result}", file=sys.stderr)
-                print(result)
-                return
+                if on_tool_call is None:
+                    print(result)
+                return result
 
             conversation_history.append({
                 "role": "tool",
@@ -310,3 +321,4 @@ async def run_agent_async(
         f"[AGENT STOPPED] Reached maximum of {max_react_steps} ReACT steps without final answer.",
         file=sys.stderr,
     )
+    return None
