@@ -278,8 +278,8 @@ async def run_agent_for_debug(
                             "value diverges from what is expected, then fix the implementation."
                         )
 
-                # ── Force respond_to_user after MAX_ITER iterations ────────
-                if iterations >= MAX_ITER:
+                # ── Force respond_to_user after max_iter iterations ────────
+                if iterations >= max_iter:
                     result += (
                         "\n\n[MAX ITERATIONS REACHED] "
                         "You must now call respond_to_user with your best current fix."
@@ -296,9 +296,9 @@ async def run_agent_for_debug(
         if done:
             break
 
-        # Give the agent one final chance to respond after hitting MAX_ITER,
+        # Give the agent one final chance to respond after hitting max_iter,
         # then break regardless to avoid runaway loops
-        if iterations >= MAX_ITER and not done:
+        if iterations >= max_iter and not done:
             # One more API call is already queued in the next _step iteration
             pass
 
