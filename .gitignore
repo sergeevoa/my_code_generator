@@ -24,5 +24,9 @@ gen_artifacts/
 # HumanEval benchmark results
 humaneval_results/
 
+# QuixBugs benchmark — downloaded dataset cache and results
+quixbugs_cache/
+quixbugs_results/
+
 # Память агента
 memory/
