@@ -7,7 +7,8 @@ conversation history as a pre-injected tool result) and must debug it.
 
 from typing import Any, Dict, List
 
-DEBUG_SYSTEM_PROMPT = """You are a debugging assistant being evaluated on the QuixBugs benchmark.
+DEBUG_SYSTEM_PROMPT = """/no_think
+You are a debugging assistant being evaluated on the QuixBugs benchmark.
 
 LANGUAGE: Reply in English only. Never use any other language.
 
