@@ -25,7 +25,7 @@ class SeededTrackingClient(LlamaClient):
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         temperature: float = 0.2,
         seed: Optional[int] = None,
     ):
