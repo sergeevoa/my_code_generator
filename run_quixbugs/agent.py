@@ -44,6 +44,21 @@ from trace_instrumenter import instrument, extract_and_compress_trace
 # Error prefixes that indicate infra / security failures — skip trace in these cases
 _SKIP_TRACE_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
 
+# Max characters kept in a single tool result added to history.
+# Typical trace-augmented result is ~2500 chars; 4000 fits it entirely.
+_MAX_TOOL_RESULT_CHARS = 4000
+
+
+def _trim_result(text: str) -> str:
+    """Keep head + tail of *text* if it exceeds _MAX_TOOL_RESULT_CHARS."""
+    if len(text) <= _MAX_TOOL_RESULT_CHARS:
+        return text
+    head = _MAX_TOOL_RESULT_CHARS // 2
+    tail = _MAX_TOOL_RESULT_CHARS - head
+    omitted = len(text) - _MAX_TOOL_RESULT_CHARS
+    return text[:head] + f"\n...[{omitted} chars omitted]...\n" + text[-tail:]
+
+
 _TIMEOUT_HINT = (
     "\n\n[PERFORMANCE] Your code exceeded the time limit. "
     "The current implementation is too slow for the given test cases. "
@@ -195,7 +210,7 @@ async def run_agent_for_debug(
         {
             "role":         "tool",
             "tool_call_id": "call_initial_run",
-            "content":      initial_result,
+            "content":      _trim_result(initial_result),
         },
     ]
 
@@ -313,7 +328,7 @@ async def run_agent_for_debug(
             history.append({
                 "role":         "tool",
                 "tool_call_id": tc["id"],
-                "content":      result,
+                "content":      _trim_result(result),
             })
 
         if done:
