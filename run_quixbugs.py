@@ -13,6 +13,11 @@ Usage:
 Alternatively, invoke the package directly:
     python -m run_quixbugs --mode debug
     python -m run_quixbugs --mode full
+
+You can also run one seed at a time:
+    python -m run_quixbugs --mode seed --seed N
+
+Seeds in benchmark: 7, 42, 137, 2718.
 """
 
 from run_quixbugs.__main__ import main
