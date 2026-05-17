@@ -371,10 +371,117 @@ def compute_summary(raw_file: Path, mode: str, seeds: List[int]) -> Dict[str, An
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Per-seed summary (single seed × both versions)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_seed_summary(raw_file: Path, seed: int) -> Dict[str, Any]:
+    """Read *raw_file* (JSONL) and return aggregated summary for a single seed."""
+    all_records: List[Dict[str, Any]] = []
+    with open(raw_file, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            if rec.get("type") == "task" and rec.get("seed") == seed:
+                all_records.append(rec)
+
+    if not all_records:
+        return {"mode": "SEED", "seed": seed, "total_records": 0}
+
+    b0_records = [r for r in all_records if r.get("version") == "B0"]
+    b1_records = [r for r in all_records if r.get("version") == "B1"]
+
+    b0_metrics = _per_run_metrics(b0_records)
+    b1_metrics = _per_run_metrics(b1_records)
+
+    def _curve(records: List[Dict[str, Any]]) -> Dict[str, float]:
+        n = len(records)
+        return (
+            {
+                f"iter_{k}": round(
+                    sum(1 for r in records if r["passed"] and r["iterations"] <= k) / n, 4
+                )
+                for k in _CURVE_POINTS
+            }
+            if n else {}
+        )
+
+    # Comparison aligned by task_id (single seed → no multi-seed averaging)
+    b0_idx = {r["task_id"]: r for r in b0_records}
+    b1_idx = {r["task_id"]: r for r in b1_records}
+    aligned_keys = sorted(set(b0_idx.keys()) & set(b1_idx.keys()))
+
+    b0_aligned = [int(b0_idx[k]["passed"]) for k in aligned_keys]
+    b1_aligned = [int(b1_idx[k]["passed"]) for k in aligned_keys]
+
+    delta_pass1 = round(
+        (sum(b1_aligned) - sum(b0_aligned)) / len(aligned_keys) if aligned_keys else 0.0,
+        4,
+    )
+    bootstrap_ci = _bootstrap_ci(b0_aligned, b1_aligned) if aligned_keys else (None, None)
+
+    both_pass = sum(1 for k in aligned_keys if b0_idx[k]["passed"] and b1_idx[k]["passed"])
+    only_b0   = sum(1 for k in aligned_keys if b0_idx[k]["passed"] and not b1_idx[k]["passed"])
+    only_b1   = sum(1 for k in aligned_keys if not b0_idx[k]["passed"] and b1_idx[k]["passed"])
+    both_fail = sum(1 for k in aligned_keys if not b0_idx[k]["passed"] and not b1_idx[k]["passed"])
+    mcnemar_p = _mcnemar_pvalue(only_b1, only_b0)
+
+    b0_failed_keys = [k for k in aligned_keys if not b0_idx[k]["passed"]]
+    trace_contrib = (
+        sum(1 for k in b0_failed_keys if b1_idx[k]["passed"]) / len(b0_failed_keys)
+        if b0_failed_keys else None
+    )
+
+    both_solved = [k for k in aligned_keys if b0_idx[k]["passed"] and b1_idx[k]["passed"]]
+    conv_speedup = (
+        round(
+            sum(b0_idx[k]["iterations"] - b1_idx[k]["iterations"] for k in both_solved)
+            / len(both_solved),
+            3,
+        )
+        if both_solved else None
+    )
+
+    return {
+        "mode":          "SEED",
+        "seed":          seed,
+        "total_records": len(all_records),
+        "B0": {**b0_metrics, "convergence_curve": _curve(b0_records)},
+        "B1": {**b1_metrics, "convergence_curve": _curve(b1_records)},
+        "comparison": {
+            "delta_pass@1":             delta_pass1,
+            "bootstrap_ci_95pct":       list(bootstrap_ci),
+            "mcnemar_table": {
+                "both_pass": both_pass,
+                "only_B0":   only_b0,
+                "only_B1":   only_b1,
+                "both_fail": both_fail,
+            },
+            "mcnemar_pvalue":           mcnemar_p,
+            "trace_contribution_rate":  round(trace_contrib, 4) if trace_contrib is not None else None,
+            "convergence_speedup_mean": conv_speedup,
+        },
+    }
+
+
+def _write_seed_summaries(raw_file: Path, seeds: List[int]) -> None:
+    """Write quixbugs_seed{N}_summary.json for every seed that has data in raw_file."""
+    for seed in seeds:
+        summary = compute_seed_summary(raw_file, seed)
+        if summary.get("total_records", 0) == 0:
+            continue
+        out = RESULTS_DIR / f"quixbugs_seed{seed}_summary.json"
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(summary, fh, ensure_ascii=False, indent=2)
+        print(f"  Seed {seed} summary → {out.name}", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main benchmark loop
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_benchmark(mode: str) -> None:
+async def run_benchmark(mode: str, target_seed: Optional[int] = None) -> None:
     """
     Run the QuixBugs benchmark in the chosen mode.
 
@@ -388,8 +495,12 @@ async def run_benchmark(mode: str) -> None:
     mode="full"
         Runs all tasks × 4 seeds × 2 versions.  On restart, skips already-
         completed (task_id, version, seed) triples using a checkpoint file.
-        The checkpoint stores: current seed, current version, current task
-        index, and the full set of completed run IDs.
+        After completion also writes per-seed summary files.
+
+    mode="seed"
+        Runs all tasks for target_seed only.  Uses the same raw file and
+        checkpoint as "full" mode so a subsequent "full" run skips
+        already-done seeds.  Writes quixbugs_seed{N}_summary.json.
     """
 
     # ── Load dataset ──────────────────────────────────────────────────────────
@@ -403,26 +514,37 @@ async def run_benchmark(mode: str) -> None:
     # ── Select tasks and files ────────────────────────────────────────────────
     if mode == "debug":
         selected_tasks  = all_tasks[:2]
+        seeds_to_run:   List[int]       = SEEDS
         checkpoint_file: Optional[Path] = None
         completed_ids:   Set[str]       = set()
         fresh_start     = True
         max_iter        = MAX_ITER_DEBUG
         raw_file        = RESULTS_DIR / "quixbugs_debug_raw.jsonl"
-        summary_file    = RESULTS_DIR / "quixbugs_debug_summary.json"
+        summary_file: Optional[Path]    = RESULTS_DIR / "quixbugs_debug_summary.json"
         print(
-            f"[DEBUG] Running {len(selected_tasks)} tasks × {len(SEEDS)} seeds "
-            f"× 2 versions = {len(selected_tasks) * len(SEEDS) * 2} agent invocations "
+            f"[DEBUG] Running {len(selected_tasks)} tasks × {len(seeds_to_run)} seeds "
+            f"× 2 versions = {len(selected_tasks) * len(seeds_to_run) * 2} agent invocations "
             f"(max_iter={max_iter}).",
             flush=True,
         )
     else:
+        # "full" or "seed" — both share the same raw file and checkpoint
         selected_tasks  = all_tasks
         max_iter        = MAX_ITER_FULL
         checkpoint_file = RESULTS_DIR / ".quixbugs_full_checkpoint.json"
         raw_file        = RESULTS_DIR / "quixbugs_full_raw.jsonl"
-        summary_file    = RESULTS_DIR / "quixbugs_full_summary.json"
         completed_ids   = set()
         fresh_start     = True
+
+        if mode == "seed":
+            if target_seed is None:
+                print("[ERROR] --seed is required with --mode seed.", file=sys.stderr)
+                return
+            seeds_to_run = [target_seed]
+            summary_file = None
+        else:
+            seeds_to_run = SEEDS
+            summary_file = RESULTS_DIR / "quixbugs_full_summary.json"
 
         if checkpoint_file.exists():
             try:
@@ -430,8 +552,9 @@ async def run_benchmark(mode: str) -> None:
                 completed_ids = set(cp.get("completed_ids", []))
                 if completed_ids:
                     fresh_start = False
+                    label = f"SEED={target_seed}" if mode == "seed" else "FULL"
                     print(
-                        f"[FULL] Resuming — {len(completed_ids)} runs already done. "
+                        f"[{label}] Resuming — {len(completed_ids)} total runs already done. "
                         f"Checkpoint: seed={cp.get('current_seed')}, "
                         f"version={cp.get('current_version')}, "
                         f"task_idx={cp.get('current_task_idx')}",
@@ -443,9 +566,10 @@ async def run_benchmark(mode: str) -> None:
                     file=sys.stderr,
                 )
 
-        total_runs = len(selected_tasks) * len(SEEDS) * 2
+        total_runs = len(selected_tasks) * len(seeds_to_run) * 2
         if fresh_start:
-            print(f"[FULL] Starting fresh — {total_runs} total agent invocations.", flush=True)
+            label = f"SEED={target_seed}" if mode == "seed" else "FULL"
+            print(f"[{label}] Starting fresh — {total_runs} total agent invocations.", flush=True)
 
     # ── Create client and sandbox ─────────────────────────────────────────────
     client = SeededTrackingClient(model=MODEL, base_url=BASE_URL)
@@ -471,7 +595,7 @@ async def run_benchmark(mode: str) -> None:
     total_runs_passed = 0
 
     try:
-        for seed_idx, seed in enumerate(SEEDS):
+        for seed_idx, seed in enumerate(seeds_to_run):
             for task_idx, task in enumerate(selected_tasks):
                 for version in ("B0", "B1"):
                     trace_debug = (version == "B1")
@@ -482,7 +606,7 @@ async def run_benchmark(mode: str) -> None:
                         continue
 
                     done_count = len(completed_ids) + total_runs_done + 1
-                    total_count = len(selected_tasks) * len(SEEDS) * 2
+                    total_count = len(selected_tasks) * len(seeds_to_run) * 2
                     print(
                         f"\n[RUN {done_count}/{total_count}] "
                         f"{task['name']}  seed={seed}  {version}",
@@ -581,47 +705,91 @@ async def run_benchmark(mode: str) -> None:
         container.stop()
 
     # ── Compute and persist summary ───────────────────────────────────────────
-    summary = compute_summary(raw_file, mode.upper(), SEEDS)
-    with open(summary_file, "w", encoding="utf-8") as fh:
-        json.dump(summary, fh, ensure_ascii=False, indent=2)
-
-    # ── Print concise summary to console ─────────────────────────────────────
-    agg = summary.get("aggregate", {})
-    b0  = agg.get("B0", {})
-    b1  = agg.get("B1", {})
-    cmp = agg.get("comparison", {})
-
     sep = "═" * 64
-    print(f"\n{sep}")
-    print(f"  QuixBugs {'DEBUG' if mode == 'debug' else 'FULL'} — "
-          f"{total_runs_done} runs  ({total_runs_passed} passed)")
-    print(f"  {'─' * 56}")
-    print(f"  {'Metric':<42}  {'B0':>8}  {'B1':>8}")
-    print(f"  {'─' * 56}")
 
-    rows = [
-        ("pass@1 (mean ± std)",
-         f"{b0.get('pass@1_mean','?')} ±{b0.get('pass@1_std','?')}",
-         f"{b1.get('pass@1_mean','?')} ±{b1.get('pass@1_std','?')}"),
-        ("Mean iters to success",
-         str(b0.get('mean_iters_to_success', '?')),
-         str(b1.get('mean_iters_to_success', '?'))),
-        ("Median iters to success",
-         str(b0.get('median_iters_to_success', '?')),
-         str(b1.get('median_iters_to_success', '?'))),
-    ]
-    for label, v0, v1 in rows:
-        print(f"  {label:<42}  {v0:>8}  {v1:>8}")
+    if mode == "seed":
+        seed_summary = compute_seed_summary(raw_file, target_seed)
+        seed_summary_file = RESULTS_DIR / f"quixbugs_seed{target_seed}_summary.json"
+        with open(seed_summary_file, "w", encoding="utf-8") as fh:
+            json.dump(seed_summary, fh, ensure_ascii=False, indent=2)
 
-    print(f"  {'─' * 56}")
-    print(f"  Δpass@1 (B1−B0):        {cmp.get('delta_pass@1', '?')}"
-          f"   CI={cmp.get('bootstrap_ci_95pct', '?')}")
-    print(f"  Trace contribution rate: {cmp.get('trace_contribution_rate', '?')}")
-    print(f"  Convergence speedup:     {cmp.get('convergence_speedup_mean', '?')} iter")
-    print(f"  McNemar p-value:         {cmp.get('mcnemar_pvalue', 'N/A (scipy missing)')}")
-    print(sep)
-    print(f"\n  Raw data  → {raw_file.name}")
-    print(f"  Summary   → {summary_file.name}")
-    if checkpoint_file:
+        b0  = seed_summary.get("B0", {})
+        b1  = seed_summary.get("B1", {})
+        cmp = seed_summary.get("comparison", {})
+
+        print(f"\n{sep}")
+        print(f"  QuixBugs SEED={target_seed} — {total_runs_done} runs  ({total_runs_passed} passed)")
+        print(f"  {'─' * 56}")
+        print(f"  {'Metric':<42}  {'B0':>8}  {'B1':>8}")
+        print(f"  {'─' * 56}")
+        rows = [
+            ("pass@1",
+             str(b0.get("pass@1", "?")),
+             str(b1.get("pass@1", "?"))),
+            ("Mean iters to success",
+             str(b0.get("mean_iters_to_success", "?")),
+             str(b1.get("mean_iters_to_success", "?"))),
+            ("Median iters to success",
+             str(b0.get("median_iters_to_success", "?")),
+             str(b1.get("median_iters_to_success", "?"))),
+        ]
+        for label, v0, v1 in rows:
+            print(f"  {label:<42}  {v0:>8}  {v1:>8}")
+        print(f"  {'─' * 56}")
+        print(f"  Δpass@1 (B1−B0):        {cmp.get('delta_pass@1', '?')}"
+              f"   CI={cmp.get('bootstrap_ci_95pct', '?')}")
+        print(f"  Trace contribution rate: {cmp.get('trace_contribution_rate', '?')}")
+        print(f"  Convergence speedup:     {cmp.get('convergence_speedup_mean', '?')} iter")
+        print(f"  McNemar p-value:         {cmp.get('mcnemar_pvalue', 'N/A (scipy missing)')}")
+        print(sep)
+        print(f"\n  Raw data  → {raw_file.name}")
+        print(f"  Summary   → {seed_summary_file.name}")
         print(f"  Checkpoint→ {checkpoint_file.name}")
-    print()
+        print()
+    else:
+        summary = compute_summary(raw_file, mode.upper(), SEEDS)
+        with open(summary_file, "w", encoding="utf-8") as fh:
+            json.dump(summary, fh, ensure_ascii=False, indent=2)
+
+        if mode == "full":
+            print("\n  Per-seed summaries:")
+            _write_seed_summaries(raw_file, SEEDS)
+
+        agg = summary.get("aggregate", {})
+        b0  = agg.get("B0", {})
+        b1  = agg.get("B1", {})
+        cmp = agg.get("comparison", {})
+
+        print(f"\n{sep}")
+        print(f"  QuixBugs {'DEBUG' if mode == 'debug' else 'FULL'} — "
+              f"{total_runs_done} runs  ({total_runs_passed} passed)")
+        print(f"  {'─' * 56}")
+        print(f"  {'Metric':<42}  {'B0':>8}  {'B1':>8}")
+        print(f"  {'─' * 56}")
+
+        rows = [
+            ("pass@1 (mean ± std)",
+             f"{b0.get('pass@1_mean','?')} ±{b0.get('pass@1_std','?')}",
+             f"{b1.get('pass@1_mean','?')} ±{b1.get('pass@1_std','?')}"),
+            ("Mean iters to success",
+             str(b0.get("mean_iters_to_success", "?")),
+             str(b1.get("mean_iters_to_success", "?"))),
+            ("Median iters to success",
+             str(b0.get("median_iters_to_success", "?")),
+             str(b1.get("median_iters_to_success", "?"))),
+        ]
+        for label, v0, v1 in rows:
+            print(f"  {label:<42}  {v0:>8}  {v1:>8}")
+
+        print(f"  {'─' * 56}")
+        print(f"  Δpass@1 (B1−B0):        {cmp.get('delta_pass@1', '?')}"
+              f"   CI={cmp.get('bootstrap_ci_95pct', '?')}")
+        print(f"  Trace contribution rate: {cmp.get('trace_contribution_rate', '?')}")
+        print(f"  Convergence speedup:     {cmp.get('convergence_speedup_mean', '?')} iter")
+        print(f"  McNemar p-value:         {cmp.get('mcnemar_pvalue', 'N/A (scipy missing)')}")
+        print(sep)
+        print(f"\n  Raw data  → {raw_file.name}")
+        print(f"  Summary   → {summary_file.name}")
+        if checkpoint_file:
+            print(f"  Checkpoint→ {checkpoint_file.name}")
+        print()
