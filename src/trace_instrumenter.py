@@ -98,6 +98,56 @@ def _make_log_call(lineno: int, name: str) -> ast.Expr:
     ))
 
 
+def _contains_attribute(node: ast.AST) -> bool:
+    """Return True if *node* or any descendant is an ast.Attribute."""
+    return any(isinstance(n, ast.Attribute) for n in ast.walk(node))
+
+
+def _attr_path_str(node: ast.AST) -> str:
+    """Return a display string for an attribute chain, e.g. 'node.successor'."""
+    if isinstance(node, ast.Attribute):
+        return f"{_attr_path_str(node.value)}.{node.attr}"
+    if isinstance(node, ast.Name):
+        return node.id
+    return "<expr>"
+
+
+def _make_attr_error_guard(lineno: int, body: list) -> ast.Try:
+    """
+    Wrap *body* statements in:
+        try:
+            <body>
+        except AttributeError as __ae{lineno}__:
+            __trace_log__(lineno, 'AttributeError', str(__ae{lineno}__))
+            raise
+    """
+    exc_var = f"__ae{lineno}__"
+    handler = ast.ExceptHandler(
+        type=ast.Name(id="AttributeError", ctx=ast.Load()),
+        name=exc_var,
+        body=[
+            ast.Expr(value=ast.Call(
+                func=ast.Name(id="__trace_log__", ctx=ast.Load()),
+                args=[
+                    ast.Constant(value=lineno),
+                    ast.Constant(value="AttributeError"),
+                    ast.Call(
+                        func=ast.Name(id="str", ctx=ast.Load()),
+                        args=[ast.Name(id=exc_var, ctx=ast.Load())],
+                        keywords=[],
+                    ),
+                ],
+                keywords=[],
+            )),
+            ast.Raise(),
+        ],
+    )
+    node = ast.Try(body=body, handlers=[handler], orelse=[], finalbody=[])
+    ast.copy_location(node, body[0])
+    ast.fix_missing_locations(node)
+    return node
+
+
 def _has_yield(node: ast.AST) -> bool:
     return any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
 
@@ -117,9 +167,15 @@ def _instrument_stmts(stmts: list) -> list:
     for stmt in stmts:
         # ── Simple assignment: x = expr ───────────────────────────────────
         if isinstance(stmt, ast.Assign):
-            result.append(stmt)
-            for name in _names_from_targets(stmt.targets):
-                result.append(_make_log_call(stmt.lineno, name))
+            log_stmts = [
+                _make_log_call(stmt.lineno, name)
+                for name in _names_from_targets(stmt.targets)
+            ]
+            if _contains_attribute(stmt.value):
+                result.append(_make_attr_error_guard(stmt.lineno, [stmt] + log_stmts))
+            else:
+                result.append(stmt)
+                result.extend(log_stmts)
 
         # ── Augmented assignment: x += expr ──────────────────────────────
         elif isinstance(stmt, ast.AugAssign):
@@ -150,13 +206,42 @@ def _instrument_stmts(stmts: list) -> list:
             if name:
                 iter_logs = [_make_log_call(stmt.lineno, name)]
 
+            instrumented_body = iter_logs + _instrument_stmts(stmt.body)
+
+            if isinstance(stmt.iter, ast.Attribute):
+                # Guard the attribute access before iteration begins
+                tmp = f"__it{stmt.lineno}__"
+                tmp_assign = ast.Assign(
+                    targets=[ast.Name(id=tmp, ctx=ast.Store())],
+                    value=stmt.iter,
+                    lineno=stmt.lineno,
+                    col_offset=stmt.col_offset,
+                )
+                tmp_log = ast.Expr(value=ast.Call(
+                    func=ast.Name(id="__trace_log__", ctx=ast.Load()),
+                    args=[
+                        ast.Constant(value=stmt.lineno),
+                        ast.Constant(value=_attr_path_str(stmt.iter)),
+                        ast.Name(id=tmp, ctx=ast.Load()),
+                    ],
+                    keywords=[],
+                ))
+                ast.fix_missing_locations(tmp_assign)
+                ast.fix_missing_locations(tmp_log)
+                result.append(_make_attr_error_guard(stmt.lineno, [tmp_assign, tmp_log]))
+                new_iter: ast.expr = ast.Name(id=tmp, ctx=ast.Load())
+                ast.copy_location(new_iter, stmt.iter)
+            else:
+                new_iter = stmt.iter
+
             new_for = ast.For(
                 target=stmt.target,
-                iter=stmt.iter,
-                body=iter_logs + _instrument_stmts(stmt.body),
+                iter=new_iter,
+                body=instrumented_body,
                 orelse=_instrument_stmts(stmt.orelse) if stmt.orelse else [],
             )
             ast.copy_location(new_for, stmt)
+            ast.fix_missing_locations(new_for)
             result.append(new_for)
 
         # ── While loop: recurse into body ─────────────────────────────────
