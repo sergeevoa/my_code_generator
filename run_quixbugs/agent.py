@@ -224,6 +224,7 @@ async def run_agent_for_debug(
     total_completion_tokens = 0
     # Code from the most recent execute_code call (fallback if agent never calls respond_to_user)
     last_executed_code: Optional[str] = None
+    no_tool_retry_count: int = 0
 
     for _step in range(MAX_REACT_STEPS):
         tool_calls_received: List[Dict[str, Any]] = []
@@ -247,6 +248,18 @@ async def run_agent_for_debug(
             total_completion_tokens += client._last_completion_tokens
 
         if not tool_calls_received:
+            if no_tool_retry_count < 2:
+                no_tool_retry_count += 1
+                history.append({
+                    "role":    "user",
+                    "content": (
+                        "You must call one of the available tools: "
+                        "execute_code (to test your fix) or respond_to_user "
+                        "(to submit your final answer). "
+                        "Plain text responses are not accepted during evaluation."
+                    ),
+                })
+                continue
             agent_error_type = "no_tool_call"
             break
 
