@@ -11,8 +11,9 @@ from sandbox.executor import SandboxContainer
 # Загружаем переменные из .env (ищем от корня проекта)
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-MODEL    = os.getenv("LLAMA_MODEL",    "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
-BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8080/v1")
+MODEL      = os.getenv("LLAMA_MODEL",    "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf")
+BASE_URL   = os.getenv("LLAMA_BASE_URL", "http://localhost:8080/v1")
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 
 
 def ensure_memory_gitignored(working_dir: str) -> None:
@@ -92,6 +93,7 @@ async def main() -> None:
                     conversation_history=conversation_history,
                     working_dir=working_dir,
                     container=container,
+                    max_tokens=MAX_TOKENS,
                 )
             except Exception as e:
                 print(f"\n[AGENT ERROR] {e}", file=sys.stderr)
