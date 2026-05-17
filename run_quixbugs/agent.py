@@ -44,6 +44,23 @@ from trace_instrumenter import instrument, extract_and_compress_trace
 # Error prefixes that indicate infra / security failures — skip trace in these cases
 _SKIP_TRACE_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
 
+_TIMEOUT_HINT = (
+    "\n\n[PERFORMANCE] Your code exceeded the time limit. "
+    "The current implementation is too slow for the given test cases. "
+    "Consider: memoization (@functools.lru_cache), "
+    "an iterative dynamic programming table, or a more efficient algorithm."
+)
+
+
+def _is_timeout(output: str) -> bool:
+    lower = output.lower()
+    return (
+        "timeout" in lower
+        or "time limit" in lower
+        or "timed out" in lower
+        or "превышен" in output
+    )
+
 
 # ── Code extractor for respond_to_user messages ───────────────────────────────
 
@@ -130,6 +147,9 @@ async def run_agent_for_debug(
     initial_success, initial_output = container.execute(initial_test_code, validate=False)
     initial_prefix  = "[OK]" if initial_success else "[ERROR]"
     initial_result  = f"{initial_prefix}\n{initial_output}"
+
+    if not initial_success and _is_timeout(initial_output):
+        initial_result += _TIMEOUT_HINT
 
     # ── Step 2 (B1 only): append trace to the initial failure ─────────────────
     trace_iterations = 0
@@ -244,6 +264,9 @@ async def run_agent_for_debug(
                 success, output = container.execute(code)
                 prefix = "[OK]" if success else "[ERROR]"
                 result = f"{prefix}\n{output}"
+
+                if not success and _is_timeout(output):
+                    result += _TIMEOUT_HINT
 
                 # Record error type from agent's own output
                 error_type_at_iter_k.append(extract_error_type(output, success))
