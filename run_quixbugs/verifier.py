@@ -78,6 +78,9 @@ _NODE_PROGRAMS = {
 # Error prefixes that signal infrastructure / security failures
 _INFRA_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
 
+# Tasks whose solution function is a generator — result must be wrapped in list()
+_GENERATOR_PROGRAMS = {"flatten", "kheapsort"}
+
 
 # ── Error-type classifier ─────────────────────────────────────────────────────
 
@@ -166,6 +169,7 @@ def build_test_harness(task: Dict[str, Any], solution_code: str) -> Optional[str
 
     func_name = task["func_name"]
     uses_node = task.get("uses_node", False)
+    is_gen    = func_name in _GENERATOR_PROGRAMS
 
     lines: List[str] = [_HELPER_CODE, solution_code, ""]
 
@@ -184,9 +188,14 @@ def build_test_harness(task: Dict[str, Any], solution_code: str) -> Optional[str
         else:
             exp_display = repr(expected)
 
+        assign_line = (
+            f"    {result_var} = list({call_expr})" if is_gen
+            else f"    {result_var} = {call_expr}"
+        )
+
         lines += [
             f"try:",
-            f"    {result_var} = {call_expr}",
+            assign_line,
             f"    assert {cmp_expr}, (",
             f"        f'Test {i}: expected {exp_display}, "
             f"got {{_node_to_list({result_var}) if isinstance({result_var}, Node) else {result_var}}}'"
