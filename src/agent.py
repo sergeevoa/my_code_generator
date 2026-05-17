@@ -123,6 +123,7 @@ async def run_agent_async(
     working_dir: str = ".",
     container=None,
     on_tool_call=None,
+    on_tool_result=None,
 ) -> Optional[str]:
     """
     ReACT-агент (Паттерн B): tool_choice="required" + no-op respond_to_user.
@@ -252,7 +253,7 @@ async def run_agent_async(
                 return message
 
             if on_tool_call is not None:
-                await on_tool_call(step + 1, func_name)
+                await on_tool_call(step + 1, func_name, func_args)
 
             # Блокируем write_file для файлов с кодом, если execute_code ещё не прошёл
             if func_name == "write_file" and not execute_code_passed:
@@ -265,6 +266,8 @@ async def run_agent_async(
                         f"Call execute_code with your solution for '{path}', then retry write_file."
                     )
                     print(f"[TOOL] {func_name}({func_args}) — BLOCKED (execute_code not yet passed)", file=sys.stderr)
+                    if on_tool_result is not None:
+                        await on_tool_result(step + 1, func_name, func_args, result)
                     conversation_history.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
@@ -304,6 +307,9 @@ async def run_agent_async(
                 session_memory_saved = True
             print(f"[TOOL] {func_name}({func_args})", file=sys.stderr)
             print(f"[RESULT]\n{result}\n", file=sys.stderr)
+
+            if on_tool_result is not None:
+                await on_tool_result(step + 1, func_name, func_args, result)
 
             if result.startswith("[INFRASTRUCTURE ERROR]"):
                 print(f"\n[Agent stopped] Infrastructure error: {result}", file=sys.stderr)

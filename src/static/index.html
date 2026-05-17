@@ -317,13 +317,81 @@ body {
 .msg.assistant ul,.msg.assistant ol { padding-left: 22px; margin: 4px 0; }
 .msg.assistant hr { border: none; border-top: 1px solid #ccc; margin: 10px 0; }
 
-.steps-log {
-  font-size: 13px;
-  color: #555;
-  margin-bottom: 8px;
-}
-.steps-log strong { color: #000; }
 .thinking { font-style: italic; color: #888; }
+
+/* ── Tool blocks ────────────────────────────────────────────────────────────── */
+.tools-container { display: flex; flex-direction: column; gap: 4px; margin-bottom: 2px; }
+.tool-block {
+  border: 1px solid #e4e4e4;
+  border-radius: 10px;
+  padding: 7px 12px;
+  background: #f8f8f8;
+  font-size: 13px;
+}
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.tool-icon { display: flex; align-items: center; flex-shrink: 0; }
+.tool-icon svg { width: 15px; height: 15px; display: block; }
+.tool-label { font-weight: 600; color: #222; }
+.tool-meta {
+  font-family: monospace;
+  font-size: 11px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 380px;
+}
+.tool-status { margin-left: auto; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.tool-status.loading { color: #bbb; letter-spacing: 1px; }
+.tool-status.ok  { color: #2a7a2a; }
+.tool-status.err { color: #c00; }
+
+.tool-details { margin-top: 6px; }
+.tool-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #666;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool-details summary::-webkit-details-marker { display: none; }
+.tool-details summary::before {
+  content: '▶';
+  font-size: 9px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.tool-details[open] summary::before { transform: rotate(90deg); }
+.tool-details summary:hover { color: #000; }
+.tool-result-body {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.tool-result-body pre {
+  background: #efefef;
+  border-radius: 5px;
+  padding: 7px 10px;
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+.tool-result-body .out-ok  { border-left: 3px solid #2a7a2a; }
+.tool-result-body .out-err { border-left: 3px solid #c00; }
+.tool-result-body .mem-row { display: flex; gap: 6px; }
+.tool-result-body .mem-key { font-weight: 600; color: #444; flex-shrink: 0; }
+.final-answer { margin-top: 6px; }
 
 /* ── Input row ──────────────────────────────────────────────────────────────── */
 #input-row {
@@ -395,6 +463,12 @@ body {
     <button id="settings-btn" class="icon-btn" title="Настройки">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path fill="#000" d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.36.07-.73.07-1.08s-.03-.73-.07-1.08l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.35-.07.72-.07 1.08s.03.73.07 1.08L2.46 14.37c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65z"/>
+      </svg>
+    </button>
+    <button id="new-chat-btn" class="icon-btn" title="Новый чат">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 20H21" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" stroke="#000" stroke-width="1.8" stroke-linejoin="round"/>
       </svg>
     </button>
   </div>
@@ -549,6 +623,17 @@ function _updateApplyBtn() {
   document.getElementById(id).addEventListener("input", _updateApplyBtn);
 });
 
+// ── New chat ───────────────────────────────────────────────────────────────────
+document.getElementById("new-chat-btn").addEventListener("click", () => {
+  if (abortController) abortController.abort();
+  agentHistory = [];
+  document.getElementById("chatbox").innerHTML = "";
+  msgInput.value = "";
+  msgInput.style.height = "auto";
+  _setSendRunning(false);
+  msgInput.focus();
+});
+
 // ── Sidebar toggle ─────────────────────────────────────────────────────────────
 document.getElementById("sidebar-toggle").addEventListener("click", () => {
   document.getElementById("sidebar").classList.toggle("open");
@@ -660,15 +745,11 @@ function escHtml(s) {
 }
 
 // ── Chat helpers ───────────────────────────────────────────────────────────────
-function addMessage(role, html, raw) {
+function addMessage(role, raw) {
   const chatbox = document.getElementById("chatbox");
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  if (role === "assistant") {
-    div.innerHTML = html;
-  } else {
-    div.textContent = raw;
-  }
+  if (role === "user") div.textContent = raw;
   chatbox.appendChild(div);
   chatbox.scrollTop = chatbox.scrollHeight;
   return div;
@@ -677,6 +758,84 @@ function addMessage(role, html, raw) {
 function scrollBottom() {
   const c = document.getElementById("chatbox");
   c.scrollTop = c.scrollHeight;
+}
+
+// ── Tool block rendering ───────────────────────────────────────────────────────
+const _TOOL_ICONS = {
+  read_file: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>`,
+  write_file: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
+  execute_code: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+  list_files: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+  update_session_memory: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`,
+  _default: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>`,
+};
+const _TOOL_LABELS = {
+  read_file: "Читаю файл",
+  write_file: "Записываю файл",
+  execute_code: "Выполняю код",
+  list_files: "Список файлов",
+  update_session_memory: "Обновляю память",
+};
+
+function _toolMeta(tool, args) {
+  if (tool === "read_file")  return args.path || "";
+  if (tool === "write_file") return args.path || "";
+  if (tool === "list_files") return args.path || ".";
+  return "";
+}
+
+function createToolBlock(payload) {
+  const { step, tool, args } = payload;
+  const meta = _toolMeta(tool, args);
+  const icon = _TOOL_ICONS[tool] || _TOOL_ICONS._default;
+  const label = _TOOL_LABELS[tool] || tool;
+
+  const div = document.createElement("div");
+  div.className = "tool-block";
+  div.dataset.step = step;
+  div.innerHTML = `
+    <div class="tool-header">
+      <span class="tool-icon">${icon}</span>
+      <span class="tool-label">${escHtml(label)}</span>
+      ${meta ? `<span class="tool-meta">${escHtml(meta)}</span>` : ""}
+      <span class="tool-status loading">···</span>
+    </div>`;
+  return div;
+}
+
+function updateToolBlock(block, payload) {
+  const { tool, args, result } = payload;
+  const statusEl = block.querySelector(".tool-status");
+  const isOk  = !result.startsWith("[ERROR]") && !result.startsWith("[INFRASTRUCTURE") && !result.startsWith("[BLOCKED]");
+  if (statusEl) {
+    statusEl.className = "tool-status " + (isOk ? "ok" : "err");
+    statusEl.textContent = isOk ? "✓" : "✗";
+  }
+
+  if (tool === "execute_code") {
+    const code   = args.code || "";
+    const raw    = result.replace(/^\[(?:OK|ERROR)\]\n?/, "").trim();
+    const det = document.createElement("details");
+    det.className = "tool-details";
+    det.innerHTML = `
+      <summary>Код и результат</summary>
+      <div class="tool-result-body">
+        <pre><code>${escHtml(code)}</code></pre>
+        <pre class="${isOk ? "out-ok" : "out-err"}">${escHtml(raw || "(нет вывода)")}</pre>
+      </div>`;
+    block.appendChild(det);
+  } else if (tool === "update_session_memory") {
+    const det = document.createElement("details");
+    det.className = "tool-details";
+    det.innerHTML = `
+      <summary>Подробнее</summary>
+      <div class="tool-result-body">
+        <div class="mem-row"><span class="mem-key">Задача:</span><span>${escHtml(args.task || "")}</span></div>
+        <div class="mem-row"><span class="mem-key">Выполнено:</span><span>${escHtml(args.done || "")}</span></div>
+        <div class="mem-row"><span class="mem-key">Осталось:</span><span>${escHtml(args.pending || "")}</span></div>
+      </div>`;
+    block.appendChild(det);
+  }
 }
 
 // ── Main send logic ────────────────────────────────────────────────────────────
@@ -690,10 +849,20 @@ async function sendMessage() {
   abortController = new AbortController();
   _setSendRunning(true);
 
-  addMessage("user", null, message);
-  const assistantDiv = addMessage("assistant", "<span class='thinking'>Запускаю агента…</span>", null);
+  addMessage("user", message);
+  const assistantDiv = addMessage("assistant", null);
 
-  const stepsLog = [];
+  // Thinking indicator
+  const thinkingSpan = document.createElement("span");
+  thinkingSpan.className = "thinking";
+  thinkingSpan.textContent = "Думаю…";
+  assistantDiv.appendChild(thinkingSpan);
+
+  // Container for tool blocks
+  const toolsContainer = document.createElement("div");
+  toolsContainer.className = "tools-container";
+  const toolBlocks = new Map();
+
   let doneReceived = false;
   let aborted = false;
 
@@ -727,52 +896,75 @@ async function sendMessage() {
       for (const chunk of parts) {
         if (!chunk.trim()) continue;
         const lines = chunk.split("\n");
-        let eventType = "message";
-        let dataLine = "";
+        let eventType = "message", dataLine = "";
         for (const line of lines) {
           if (line.startsWith("event: ")) eventType = line.slice(7).trim();
-          if (line.startsWith("data: ")) dataLine = line.slice(6);
+          if (line.startsWith("data: "))  dataLine  = line.slice(6);
         }
         if (!dataLine) continue;
-        let payload;
-        try { payload = JSON.parse(dataLine); } catch { continue; }
+        let p; try { p = JSON.parse(dataLine); } catch { continue; }
 
-        if (eventType === "step") {
-          stepsLog.push(`<strong>Шаг ${payload.step}:</strong> <code>${payload.tool}</code>`);
-          assistantDiv.innerHTML =
-            `<div class='steps-log'>${stepsLog.join("<br>")}</div>` +
-            `<span class='thinking'>Думаю…</span>`;
+        if (eventType === "tool_call") {
+          thinkingSpan.remove();
+          if (!toolsContainer.parentElement) assistantDiv.appendChild(toolsContainer);
+          const block = createToolBlock(p);
+          toolBlocks.set(p.step, block);
+          toolsContainer.appendChild(block);
           scrollBottom();
+
+        } else if (eventType === "tool_result") {
+          const block = toolBlocks.get(p.step);
+          if (block) updateToolBlock(block, p);
+          scrollBottom();
+
         } else if (eventType === "done") {
           doneReceived = true;
-          agentHistory = payload.history;
-          let finalHtml = renderMarkdown(payload.text);
-          if (stepsLog.length) {
-            finalHtml = `<div class='steps-log'>${stepsLog.join("<br>")}</div><hr>` + finalHtml;
+          agentHistory = p.history;
+          thinkingSpan.remove();
+          if (toolsContainer.parentElement && p.text) {
+            const hr = document.createElement("hr");
+            hr.style.cssText = "border:none;border-top:1px solid #e0e0e0;margin:8px 0";
+            assistantDiv.appendChild(hr);
           }
-          assistantDiv.innerHTML = finalHtml;
+          const finalDiv = document.createElement("div");
+          finalDiv.className = "final-answer";
+          finalDiv.innerHTML = renderMarkdown(p.text || "_(Нет ответа)_");
+          assistantDiv.appendChild(finalDiv);
           scrollBottom();
+
         } else if (eventType === "error") {
-          assistantDiv.innerHTML = `<span style="color:#c00">❌ ${escHtml(payload.text)}</span>`;
+          thinkingSpan.remove();
+          const err = document.createElement("span");
+          err.style.color = "#c00";
+          err.textContent = "❌ " + p.text;
+          assistantDiv.appendChild(err);
           scrollBottom();
         }
       }
     }
 
     if (!doneReceived && !aborted) {
-      assistantDiv.innerHTML += "<br><span style='color:#c00'>❌ Соединение прервано</span>";
+      const err = document.createElement("span");
+      err.style.color = "#c00";
+      err.textContent = "❌ Соединение прервано";
+      assistantDiv.appendChild(err);
     }
   } catch (e) {
     if (e.name === "AbortError") {
       aborted = true;
-      const prefix = stepsLog.length
-        ? `<div class='steps-log'>${stepsLog.join("<br>")}</div><hr>`
-        : "";
-      assistantDiv.innerHTML = prefix + "<span class='thinking'>Остановлено</span>";
-      scrollBottom();
+      thinkingSpan.remove();
+      const s = document.createElement("span");
+      s.className = "thinking";
+      s.textContent = "Остановлено";
+      assistantDiv.appendChild(s);
     } else {
-      assistantDiv.innerHTML = `<span style="color:#c00">❌ Ошибка: ${escHtml(String(e))}</span>`;
+      thinkingSpan.remove();
+      const err = document.createElement("span");
+      err.style.color = "#c00";
+      err.textContent = "❌ Ошибка: " + String(e);
+      assistantDiv.appendChild(err);
     }
+    scrollBottom();
   } finally {
     abortController = null;
     _setSendRunning(false);
