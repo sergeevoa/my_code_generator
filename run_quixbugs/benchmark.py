@@ -591,8 +591,11 @@ async def run_benchmark(mode: str, target_seed: Optional[int] = None) -> None:
             fh.write(json.dumps(run_info, ensure_ascii=False) + "\n")
 
     # ── Benchmark loop: seed → task → version ────────────────────────────────
-    total_runs_done   = 0
-    total_runs_passed = 0
+    total_runs_done     = 0
+    total_runs_passed   = 0
+    # Snapshot the count of runs already completed from previous sessions.
+    # Must not change as the current session adds to completed_ids.
+    runs_from_checkpoint = len(completed_ids)
 
     try:
         for seed_idx, seed in enumerate(seeds_to_run):
@@ -605,7 +608,7 @@ async def run_benchmark(mode: str, target_seed: Optional[int] = None) -> None:
                         print(f"[SKIP] {run_id}", flush=True)
                         continue
 
-                    done_count = len(completed_ids) + total_runs_done + 1
+                    done_count = runs_from_checkpoint + total_runs_done + 1
                     total_count = len(selected_tasks) * len(seeds_to_run) * 2
                     print(
                         f"\n[RUN {done_count}/{total_count}] "
