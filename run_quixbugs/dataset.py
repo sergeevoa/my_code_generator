@@ -111,6 +111,15 @@ _QUIXBUGS_IMPORTS = re.compile(
     re.MULTILINE,
 )
 
+# Per-task predicates: (inputs, expected) -> True to keep the test case.
+# Used to drop test cases that are impractical under sandbox constraints
+# (e.g. O(n*capacity) DP with capacity in the millions → OOM at 64 MB).
+_TESTCASE_FILTERS: Dict[str, Any] = {
+    # knapsack: capacity > 10_000 causes the DP table to exceed the 64 MB
+    # Docker memory limit regardless of algorithm, producing SIGKILL / RuntimeError.
+    "knapsack": lambda inputs, _expected: inputs[0] <= 10_000,
+}
+
 
 def _fetch(url: str, timeout: int = 30) -> Optional[str]:
     try:
@@ -213,6 +222,23 @@ def load_quixbugs(force_refresh: bool = False) -> List[Dict[str, Any]]:
             continue
 
         testcases = _parse_testcases(raw_json) if raw_json else None
+
+        if testcases and name in _TESTCASE_FILTERS:
+            pred = _TESTCASE_FILTERS[name]
+            filtered = [(inp, exp) for inp, exp in testcases if pred(inp, exp)]
+            if len(filtered) < len(testcases):
+                dropped = len(testcases) - len(filtered)
+                print(
+                    f"[dataset] FILTER {name} — dropped {dropped} test case(s) "
+                    f"exceeding sandbox limits ({len(filtered)} remaining).",
+                    file=sys.stderr,
+                )
+                testcases = filtered
+                new_raw = "\n".join(
+                    json.dumps([inp, exp]) for inp, exp in filtered
+                ) + "\n"
+                tc_cache.write_text(new_raw, encoding="utf-8")
+
         if not testcases:
             reason = "no JSON testcases in repo" if name in _NO_JSON_TESTCASES else "fetch failed"
             print(
