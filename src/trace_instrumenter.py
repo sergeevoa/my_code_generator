@@ -35,29 +35,28 @@ from typing import List, Optional
 
 # ── Limits ────────────────────────────────────────────────────────────────────
 
-# Max trace events captured inside the sandbox (controls stdout size)
-_TRACE_MAX_EVENTS = 60
+# Max trace events kept in memory (tail-based: deque evicts oldest on overflow)
+_TRACE_MAX_EVENTS = 200
 # Max repr() length per variable value
 _TRACE_MAX_VALUE_LEN = 100
 
 # ── Trace header injected at the top of every instrumented code block ─────────
-# Uses only builtins — no imports needed.  Names prefixed with __ to minimise
-# clashes with user code.
+# Uses deque(maxlen=N) so only the LAST N events are retained — the tail of
+# execution is where the bug symptom actually appears.
+# Names prefixed with __ to minimise clashes with user code.
 
 _TRACE_HEADER = """\
-__trace_events__ = []
-__trace_count__ = [0]
+from collections import deque as __deque__
+__trace_events__ = __deque__(maxlen=200)
 
 def __trace_log__(lineno, name, value):
-    if __trace_count__[0] < 60:
-        __trace_count__[0] += 1
-        try:
-            v = repr(value)
-            if len(v) > 100:
-                v = v[:97] + '...'
-        except Exception:
-            v = '<repr_error>'
-        __trace_events__.append('L' + str(lineno) + ' ' + name + '=' + v)
+    try:
+        v = repr(value)
+        if len(v) > 100:
+            v = v[:97] + '...'
+    except Exception:
+        v = '<repr_error>'
+    __trace_events__.append('L' + str(lineno) + ' ' + name + '=' + v)
 
 """
 
@@ -282,7 +281,7 @@ def instrument(source_code: str) -> Optional[str]:
 
 # ── Trace extraction and compression ─────────────────────────────────────────
 
-def extract_and_compress_trace(output: str, max_shown: int = 40) -> Optional[str]:
+def extract_and_compress_trace(output: str, max_shown: int = 60) -> Optional[str]:
     """
     Extract the trace from sandbox stdout and return a compact string.
 
