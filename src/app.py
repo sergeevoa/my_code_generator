@@ -215,8 +215,11 @@ async def _stream_agent(
 
     queue: asyncio.Queue = asyncio.Queue()
 
-    async def on_step(step_num: int, func_name: str) -> None:
-        await queue.put(("step", step_num, func_name))
+    async def on_step(step_num: int, func_name: str, func_args: dict) -> None:
+        await queue.put(("call", step_num, func_name, func_args))
+
+    async def on_result(step_num: int, func_name: str, func_args: dict, result: str) -> None:
+        await queue.put(("result", step_num, func_name, func_args, result))
 
     task = asyncio.create_task(
         run_agent_async(
@@ -229,10 +232,19 @@ async def _stream_agent(
             working_dir=working_dir,
             container=_state.container,
             on_tool_call=on_step,
+            on_tool_result=on_result,
         )
     )
 
     yield _sse("start", {})
+
+    def _emit_item(item: tuple) -> str:
+        if item[0] == "call":
+            _, step_num, func_name, func_args = item
+            return _sse("tool_call", {"step": step_num, "tool": func_name, "args": func_args})
+        else:
+            _, step_num, func_name, func_args, res = item
+            return _sse("tool_result", {"step": step_num, "tool": func_name, "args": func_args, "result": res})
 
     try:
         while not task.done():
@@ -241,8 +253,7 @@ async def _stream_agent(
                 return
             try:
                 item = await asyncio.wait_for(asyncio.shield(queue.get()), timeout=0.4)
-                _, step_num, func_name = item
-                yield _sse("step", {"step": step_num, "tool": func_name})
+                yield _emit_item(item)
             except asyncio.TimeoutError:
                 pass
     finally:
@@ -254,12 +265,10 @@ async def _stream_agent(
                 pass
             return
 
-    # drain remaining step events
+    # drain remaining events
     while not queue.empty():
         try:
-            item = queue.get_nowait()
-            _, step_num, func_name = item
-            yield _sse("step", {"step": step_num, "tool": func_name})
+            yield _emit_item(queue.get_nowait())
         except asyncio.QueueEmpty:
             break
 
