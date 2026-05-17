@@ -224,32 +224,39 @@ async def run_agent_for_debug(
     total_completion_tokens = 0
     # Code from the most recent execute_code call (fallback if agent never calls respond_to_user)
     last_executed_code: Optional[str] = None
-    no_tool_retry_count: int = 0
 
     for _step in range(MAX_REACT_STEPS):
         tool_calls_received: List[Dict[str, Any]] = []
 
-        try:
-            async for event in client.astream_with_tools(
-                history,
-                DEBUG_TOOLS,
-                max_tokens=max_tokens,
-                temperature=0.2,
-                seed=seed,
-            ):
-                if event["type"] == "tool_use":
-                    tool_calls_received.append(cast(Dict[str, Any], event["tool_call"]))
-        except Exception as exc:
-            agent_error_type = "agent_error"
-            print(f"\n  [agent error] {exc}", file=sys.stderr)
-            break
-        finally:
-            total_prompt_tokens     += client._last_prompt_tokens
-            total_completion_tokens += client._last_completion_tokens
+        # Up to 3 attempts per step: original call + 2 no-tool-call retries.
+        # Retries stay inside the same _step so they don't consume MAX_REACT_STEPS budget.
+        for _attempt in range(3):
+            tool_calls_received = []
+            try:
+                async for event in client.astream_with_tools(
+                    history,
+                    DEBUG_TOOLS,
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                    seed=seed,
+                ):
+                    if event["type"] == "tool_use":
+                        tool_calls_received.append(cast(Dict[str, Any], event["tool_call"]))
+            except Exception as exc:
+                agent_error_type = "agent_error"
+                print(f"\n  [agent error] {exc}", file=sys.stderr)
+                break
+            finally:
+                total_prompt_tokens     += client._last_prompt_tokens
+                total_completion_tokens += client._last_completion_tokens
 
-        if not tool_calls_received:
-            if no_tool_retry_count < 2:
-                no_tool_retry_count += 1
+            if agent_error_type:
+                break
+
+            if tool_calls_received:
+                break
+
+            if _attempt < 2:
                 history.append({
                     "role":    "user",
                     "content": (
@@ -259,7 +266,11 @@ async def run_agent_for_debug(
                         "Plain text responses are not accepted during evaluation."
                     ),
                 })
-                continue
+
+        if agent_error_type:
+            break
+
+        if not tool_calls_received:
             agent_error_type = "no_tool_call"
             break
 
