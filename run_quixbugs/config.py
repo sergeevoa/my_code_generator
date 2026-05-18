@@ -31,6 +31,8 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 # Max debug iterations (execute_code calls) per task — separate limits per mode
 MAX_ITER_FULL  = int(os.getenv("QB_MAX_ITER_FULL",  "5"))
 MAX_ITER_DEBUG = int(os.getenv("QB_MAX_ITER_DEBUG", "2"))
+# Wall-clock time limit per task (seconds); exceeded → FAIL, next task
+TASK_TIMEOUT_S = int(os.getenv("QB_TASK_TIMEOUT_S", "600"))
 
 # ── Seeds ─────────────────────────────────────────────────────────────────────
 # 4 fixed seeds chosen for meaningfully different LLM sampling:

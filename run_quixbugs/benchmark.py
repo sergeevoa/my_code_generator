@@ -25,6 +25,7 @@ Record schema (one line per completed task/version/seed):
     }
 """
 
+import asyncio
 import json
 import math
 import random
@@ -48,6 +49,7 @@ from .config import (
     RESULTS_DIR,
     RUN_INFO_TEMPLATE,
     SEEDS,
+    TASK_TIMEOUT_S,
 )
 from .dataset import load_quixbugs
 from .verifier import verify_solution
@@ -618,16 +620,67 @@ async def run_benchmark(mode: str, target_seed: Optional[int] = None) -> None:
 
                     t_start = time.monotonic()
 
-                    # ── Run agent ─────────────────────────────────────────────
-                    agent_result = await run_agent_for_debug(
-                        client,
-                        task,
-                        container,
-                        max_tokens=MAX_TOKENS,
-                        trace_debug=trace_debug,
-                        seed=seed,
-                        max_iter=max_iter,
-                    )
+                    # ── Run agent (with per-task wall-clock timeout) ───────────
+                    try:
+                        agent_result = await asyncio.wait_for(
+                            run_agent_for_debug(
+                                client,
+                                task,
+                                container,
+                                max_tokens=MAX_TOKENS,
+                                trace_debug=trace_debug,
+                                seed=seed,
+                                max_iter=max_iter,
+                            ),
+                            timeout=TASK_TIMEOUT_S,
+                        )
+                    except asyncio.TimeoutError:
+                        wall_time_s = round(time.monotonic() - t_start, 2)
+                        print(
+                            f"  [TIMEOUT] Exceeded {TASK_TIMEOUT_S}s — marking as FAIL.",
+                            flush=True,
+                        )
+                        record = {
+                            "type":                  "task",
+                            "task_id":               task["name"],
+                            "version":               version,
+                            "seed":                  seed,
+                            "passed":                False,
+                            "iterations":            0,
+                            "passed_at_iter_k":      [],
+                            "error_type_at_iter_k":  ["task_timeout"],
+                            "prompt_tokens":         0,
+                            "completion_tokens":     0,
+                            "wall_time_s":           wall_time_s,
+                            "final_completion":      "",
+                        }
+                        if version == "B1":
+                            record["trace_iterations"] = 0
+                        with open(raw_file, "a", encoding="utf-8") as fh:
+                            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        if checkpoint_file is not None:
+                            completed_ids.add(run_id)
+                            checkpoint_file.write_text(
+                                json.dumps(
+                                    {
+                                        "completed_ids":    sorted(completed_ids),
+                                        "current_seed":     seed,
+                                        "current_version":  version,
+                                        "current_task_idx": task_idx,
+                                        "last_updated":     datetime.now().isoformat(),
+                                    },
+                                    ensure_ascii=False,
+                                    indent=2,
+                                ),
+                                encoding="utf-8",
+                            )
+                        total_runs_done += 1
+                        print(
+                            f"  [FAIL]  iters=0  tokens=0  time={wall_time_s}s"
+                            f"  error=task_timeout",
+                            flush=True,
+                        )
+                        continue
 
                     # ── Official final verification ───────────────────────────
                     final_code = agent_result["final_completion"] or ""
