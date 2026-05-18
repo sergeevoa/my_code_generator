@@ -248,6 +248,11 @@ async def run_agent_async(
                 if not session_memory_saved:
                     _auto_save_session_memory(conversation_history, user_message, working_dir)
                 message = func_args.get("message", "")
+                print(
+                    f"[TOOL] respond_to_user(...)\n"
+                    f"[AGENT FINISHED] after {step + 1} step(s).",
+                    file=sys.stderr,
+                )
                 if on_tool_call is None:
                     print(message)
                 return message

@@ -121,7 +121,7 @@ async def index():
 
 @app.get("/info")
 async def info():
-    token_max = max((_state.n_ctx_slot - 1) if _state.n_ctx_slot else 16384, DEFAULT_MAX_TOKENS)
+    token_max = max(_state.n_ctx_slot if _state.n_ctx_slot else 16384, DEFAULT_MAX_TOKENS)
     token_val = min(DEFAULT_MAX_TOKENS, token_max)
     return JSONResponse({
         "model": _state.model_name,
@@ -252,7 +252,7 @@ async def _stream_agent(
                 task.cancel()
                 return
             try:
-                item = await asyncio.wait_for(asyncio.shield(queue.get()), timeout=0.4)
+                item = await asyncio.wait_for(queue.get(), timeout=0.4)
                 yield _emit_item(item)
             except asyncio.TimeoutError:
                 pass
