@@ -17,6 +17,36 @@ MAX_REACT_STEPS = 8
 # Output prefixes that indicate infra / security failures — no point tracing these.
 _SKIP_TRACE_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
 
+_TIMEOUT_HINT = (
+    "\n\n[PERFORMANCE] Your code exceeded the time limit. "
+    "The current implementation is too slow for the given test cases. "
+    "Consider: memoization (@functools.lru_cache), "
+    "an iterative dynamic programming table, or a more efficient algorithm."
+)
+
+# Max characters kept in a single tool result added to history.
+_MAX_TOOL_RESULT_CHARS = 4000
+
+
+def _is_timeout(output: str) -> bool:
+    lower = output.lower()
+    return (
+        "timeout" in lower
+        or "time limit" in lower
+        or "timed out" in lower
+        or "превышен" in output
+    )
+
+
+def _trim_result(text: str) -> str:
+    """Keep head + tail of *text* if it exceeds _MAX_TOOL_RESULT_CHARS."""
+    if len(text) <= _MAX_TOOL_RESULT_CHARS:
+        return text
+    head = _MAX_TOOL_RESULT_CHARS // 2
+    tail = _MAX_TOOL_RESULT_CHARS - head
+    omitted = len(text) - _MAX_TOOL_RESULT_CHARS
+    return text[:head] + f"\n...[{omitted} chars omitted]...\n" + text[-tail:]
+
 
 def _auto_save_session_memory(
     history: List[Dict[str, Any]],
@@ -144,40 +174,51 @@ async def run_agent_async(
                 )
                 await asyncio.sleep(1)
 
-        ticker = asyncio.create_task(_waiting_ticker(step + 1, max_react_steps))
-        first_event = True
+        # ── Сбор tool_calls от модели (до 2 ретраев при no-tool-call) ──────────
+        for _attempt in range(3):
+            ticker = asyncio.create_task(_waiting_ticker(step + 1, max_react_steps))
+            first_event = True
+            tool_calls_received = []
 
-        # ── Сбор tool_calls от модели ────────────────────────────────────────
-        tool_calls_received: List[Dict[str, Any]] = []
+            try:
+                async for event in client.astream_with_tools(
+                    conversation_history,
+                    TOOLS,
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                ):
+                    if first_event:
+                        ticker.cancel()
+                        print(
+                            f"\r[Step {step + 1}/{max_react_steps}]" + " " * 40 + "\r",
+                            end="", flush=True, file=sys.stderr,
+                        )
+                        first_event = False
 
-        try:
-            async for event in client.astream_with_tools(
-                conversation_history,
-                TOOLS,
-                max_tokens=max_tokens,
-                temperature=0.2,
-            ):
-                if first_event:
-                    ticker.cancel()
-                    print(
-                        f"\r[Step {step + 1}/{max_react_steps}]" + " " * 40 + "\r",
-                        end="", flush=True, file=sys.stderr,
-                    )
-                    first_event = False
+                    if event["type"] == "tool_use":
+                        tool_calls_received.append(event["tool_call"])
 
-                if event["type"] == "tool_use":
-                    tool_calls_received.append(event["tool_call"])
+            except Exception as e:
+                ticker.cancel()
+                print(f"\n[Agent error while streaming]: {e}", file=sys.stderr)
+                return
+            finally:
+                ticker.cancel()
 
-        except Exception as e:
-            ticker.cancel()
-            print(f"\n[Agent error while streaming]: {e}", file=sys.stderr)
-            return
-        finally:
-            ticker.cancel()
+            if tool_calls_received:
+                break
 
-        # ── Модель не вернула ни одного tool_call (неожиданно при required) ──
+            if _attempt < 2:
+                conversation_history.append({
+                    "role": "user",
+                    "content": (
+                        "You must call one of the available tools. "
+                        "Plain text responses are not accepted."
+                    ),
+                })
+
         if not tool_calls_received:
-            print("\n[Agent warning] No tool calls received — stopping.", file=sys.stderr)
+            print("\n[Agent warning] No tool calls received after retries — stopping.", file=sys.stderr)
             return
 
         # ── Добавляем ответ ассистента в историю ────────────────────────────
@@ -227,18 +268,17 @@ async def run_agent_async(
             if func_name == "execute_code" and result.startswith("[OK]"):
                 execute_code_passed = True
 
-            # ── Trace-augmented debugging ────────────────────────────────────
-            # Если execute_code вернул [ERROR] и трассировка включена —
-            # запускаем инструментированную версию и добавляем трассу к ответу.
-            # Пропускаем инфраструктурные / sandbox-ошибки: там трасса бесполезна.
-            if (
-                func_name == "execute_code"
-                and result.startswith("[ERROR]")
-                and container is not None
-            ):
-                # Часть после "[ERROR]\n" — это сырой вывод sandbox
+            if func_name == "execute_code" and result.startswith("[ERROR]"):
                 raw_output = result.split("\n", 1)[1] if "\n" in result else ""
-                if not any(raw_output.startswith(p) for p in _SKIP_TRACE_PREFIXES):
+
+                if _is_timeout(raw_output):
+                    result += _TIMEOUT_HINT
+
+                # ── Trace-augmented debugging ────────────────────────────────
+                # Пропускаем инфраструктурные / sandbox-ошибки: там трасса бесполезна.
+                elif container is not None and not any(
+                    raw_output.startswith(p) for p in _SKIP_TRACE_PREFIXES
+                ):
                     trace = _run_with_trace(func_args.get("code", ""), container)
                     if trace:
                         result += (
@@ -263,7 +303,7 @@ async def run_agent_async(
             conversation_history.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "content": result,
+                "content": _trim_result(result),
             })
 
     print(
