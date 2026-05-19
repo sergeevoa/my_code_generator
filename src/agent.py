@@ -185,7 +185,7 @@ async def run_agent_async(
         for _attempt in range(3):
             ticker = asyncio.create_task(_waiting_ticker(step + 1, max_react_steps))
             first_event = True
-            tool_calls_received = []
+            tool_calls_received: List[Dict[str, Any]] = []
 
             try:
                 async for event in client.astream_with_tools(
