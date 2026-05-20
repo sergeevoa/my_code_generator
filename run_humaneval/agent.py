@@ -72,6 +72,37 @@ def extract_code(response: str) -> Optional[str]:
 # would be uninformative in these cases, so we skip instrumentation.
 _SKIP_TRACE_PREFIXES = ("[SANDBOX]", "[INFRASTRUCTURE", "[NOT TESTABLE", "[NO OUTPUT]")
 
+# Max characters kept in a single tool result added to history.
+# Typical trace-augmented result is ~2500 chars; 4000 fits it entirely.
+_MAX_TOOL_RESULT_CHARS = 4000
+
+_TIMEOUT_HINT = (
+    "\n\n[PERFORMANCE] Your code exceeded the time limit. "
+    "The current implementation is too slow for the given test cases. "
+    "Consider: memoization (@functools.lru_cache), "
+    "an iterative dynamic programming table, or a more efficient algorithm."
+)
+
+
+def _is_timeout(output: str) -> bool:
+    lower = output.lower()
+    return (
+        "timeout" in lower
+        or "time limit" in lower
+        or "timed out" in lower
+        or "превышен" in output
+    )
+
+
+def _trim_result(text: str) -> str:
+    """Keep head + tail of *text* if it exceeds _MAX_TOOL_RESULT_CHARS."""
+    if len(text) <= _MAX_TOOL_RESULT_CHARS:
+        return text
+    head = _MAX_TOOL_RESULT_CHARS // 2
+    tail = _MAX_TOOL_RESULT_CHARS - head
+    omitted = len(text) - _MAX_TOOL_RESULT_CHARS
+    return text[:head] + f"\n...[{omitted} chars omitted]...\n" + text[-tail:]
+
 
 def _run_with_trace(code: str, container: SandboxContainer) -> Optional[str]:
     """
@@ -134,24 +165,46 @@ async def run_agent_for_eval(
     agent_error_type: Optional[str] = None
 
     for _step in range(MAX_REACT_STEPS):
-        tool_calls_received: List[Dict[str, Any]] = []
+        # Up to 3 attempts per step: original call + 2 no-tool-call retries.
+        # Retries stay inside the same _step so they don't consume MAX_REACT_STEPS budget.
+        for _attempt in range(3):
+            tool_calls_received: List[Dict[str, Any]] = []
+            try:
+                async for event in client.astream_with_tools(
+                    history,
+                    EVAL_TOOLS,
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                ):
+                    if event["type"] == "tool_use":
+                        tool_calls_received.append(cast(Dict[str, Any], event["tool_call"]))
+            except Exception as exc:
+                agent_error_type = "agent_error"
+                print(f"\n  [agent error] {exc}", file=sys.stderr)
+                break
+            finally:
+                total_prompt_tokens    += client._last_prompt_tokens
+                total_completion_tokens += client._last_completion_tokens
 
-        try:
-            async for event in client.astream_with_tools(
-                history,
-                EVAL_TOOLS,
-                max_tokens=max_tokens,
-                temperature=0.2,
-            ):
-                if event["type"] == "tool_use":
-                    tool_calls_received.append(cast(Dict[str, Any], event["tool_call"]))
-        except Exception as exc:
-            agent_error_type = "agent_error"
-            print(f"\n  [agent error] {exc}", file=sys.stderr)
+            if agent_error_type:
+                break
+
+            if tool_calls_received:
+                break
+
+            if _attempt < 2:
+                history.append({
+                    "role":    "user",
+                    "content": (
+                        "You must call one of the available tools: "
+                        "execute_code (to test your implementation) or respond_to_user "
+                        "(to submit your final answer). "
+                        "Plain text responses are not accepted during evaluation."
+                    ),
+                })
+
+        if agent_error_type:
             break
-        finally:
-            total_prompt_tokens    += client._last_prompt_tokens
-            total_completion_tokens += client._last_completion_tokens
 
         if not tool_calls_received:
             agent_error_type = "no_tool_call"
@@ -183,10 +236,13 @@ async def run_agent_for_eval(
                 prefix = "[OK]" if success else "[ERROR]"
                 result = f"{prefix}\n{output}"
 
+                if not success and _is_timeout(output):
+                    result += _TIMEOUT_HINT
+
                 # ── Trace-augmented debugging ─────────────────────────────
                 # Only run when: test failed + trace mode enabled +
                 # failure is a genuine logic error (not infra / security).
-                if (
+                elif (
                     trace_debug
                     and not success
                     and not any(output.startswith(p) for p in _SKIP_TRACE_PREFIXES)
@@ -198,8 +254,8 @@ async def run_agent_for_eval(
                             "\n\n--- EXECUTION TRACE ---\n"
                             + trace
                             + "\n--- END TRACE ---\n"
-                            "\nAnalyze the trace above: find the line where the actual "
-                            "value diverges from what is expected, then fix the implementation."
+                            "\nAnalyze the trace above: find the line where the actual value "
+                            "diverges from what is expected, then fix the implementation."
                         )
             else:
                 result = (
@@ -209,7 +265,7 @@ async def run_agent_for_eval(
             history.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "content": result,
+                "content": _trim_result(result),
             })
 
         if done:
