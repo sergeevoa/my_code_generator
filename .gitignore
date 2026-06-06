@@ -32,3 +32,7 @@ quixbugs_results/
 
 # Память агента
 memory/
+
+# Docx export
+_make_docx.py
+code.docx
