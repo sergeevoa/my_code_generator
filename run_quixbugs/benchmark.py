@@ -55,7 +55,7 @@ from .dataset import load_quixbugs
 from .verifier import verify_solution
 
 # Convergence curve is reported at these iteration checkpoints
-_CURVE_POINTS = [1, 2, 3, 5]
+_CURVE_POINTS = [1, 2, 3, 4, 5]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
