@@ -28,13 +28,18 @@ class SeededTrackingClient(LlamaClient):
         max_tokens: int = 16384,
         temperature: float = 0.2,
         seed: Optional[int] = None,
+        thinking_budget: int = 8192,
     ):
         """
         Stream tool calls, capturing token usage from the final chunk.
 
-        seed — passed to the inference server to make sampling deterministic.
-               Different seeds produce meaningfully different outputs because
-               they shift the multinomial distribution at every sampling step.
+        seed            — passed to the inference server to make sampling deterministic.
+                          Different seeds produce meaningfully different outputs because
+                          they shift the multinomial distribution at every sampling step.
+        thinking_budget — Qwen3-native soft limit on <think> tokens. The model is
+                          trained to wrap up reasoning before this count and always
+                          produces a complete answer. Requires --jinja on the server.
+                          Must be < max_tokens to leave room for the actual answer.
 
         Yields the same event dicts as the parent class:
             {"type": "text",     "text": "..."}
@@ -46,6 +51,10 @@ class SeededTrackingClient(LlamaClient):
         extra_kwargs: Dict[str, Any] = {}
         if seed is not None:
             extra_kwargs["seed"] = seed
+
+        extra_body: Dict[str, Any] = {
+            "chat_template_kwargs": {"thinking_budget": thinking_budget},
+        }
 
         stream = None
 
@@ -60,6 +69,7 @@ class SeededTrackingClient(LlamaClient):
                 temperature=temperature,
                 stream=True,
                 stream_options={"include_usage": True},
+                extra_body=extra_body,
                 **extra_kwargs,
             )
         except Exception:
@@ -74,6 +84,7 @@ class SeededTrackingClient(LlamaClient):
                 max_tokens=max_tokens,
                 temperature=temperature,
                 stream=True,
+                extra_body=extra_body,
                 **extra_kwargs,
             )
 
