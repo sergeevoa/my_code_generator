@@ -29,7 +29,7 @@ MAX_REACT_STEPS = int(os.getenv("QB_MAX_REACT_STEPS", "10"))
 # Max tokens the model may generate per step
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 # Soft limit on <think> tokens (Qwen3 chat_template_kwargs); must be < MAX_TOKENS
-THINKING_BUDGET = int(os.getenv("QB_THINKING_BUDGET", "8192"))
+THINKING_BUDGET = int(os.getenv("QB_THINKING_BUDGET", "4096"))
 # Max debug iterations (execute_code calls) per task — separate limits per mode
 MAX_ITER_FULL  = int(os.getenv("QB_MAX_ITER_FULL",  "5"))
 MAX_ITER_DEBUG = int(os.getenv("QB_MAX_ITER_DEBUG", "2"))
