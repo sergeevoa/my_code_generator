@@ -73,7 +73,7 @@ def _is_timeout(output: str) -> bool:
         "timeout" in lower
         or "time limit" in lower
         or "timed out" in lower
-        or "превышен" in output
+        or "превышен" in output.lower()
     )
 
 

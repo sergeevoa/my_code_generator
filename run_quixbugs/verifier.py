@@ -96,7 +96,7 @@ def extract_error_type(output: str, success: bool) -> Optional[str]:
     out_lower = output.lower()
     if "timeout" in out_lower or "time limit" in out_lower or "timed out" in out_lower:
         return "TimeoutError"
-    if "превышен" in output:
+    if "превышен" in output.lower():
         return "TimeoutError"
     if "recursionerror" in out_lower or "maximum recursion" in out_lower:
         return "RecursionError"
