@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, cast
 from sandbox.executor import SandboxContainer  # available via sys.path set in __init__
 
 from .client import SeededTrackingClient
-from .config import MAX_REACT_STEPS
+from .config import MAX_REACT_STEPS, THINKING_BUDGET
 from .prompts import DEBUG_SYSTEM_PROMPT, DEBUG_TOOLS
 from .verifier import (
     build_test_harness,
@@ -239,6 +239,7 @@ async def run_agent_for_debug(
                     max_tokens=max_tokens,
                     temperature=0.2,
                     seed=seed,
+                    thinking_budget=THINKING_BUDGET,
                 ):
                     if event["type"] == "tool_use":
                         tool_calls_received.append(cast(Dict[str, Any], event["tool_call"]))
