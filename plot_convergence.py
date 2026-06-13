@@ -150,12 +150,7 @@ def build_plot(summary: dict, out_path: Path) -> None:
     # ── Title ───────────────────────────────────────────────────────────────
     mode = summary.get("mode", "")
     seed = summary.get("seed")
-    if mode == "SEED" and seed is not None:
-        subtitle = f"Seed {seed}"
-    elif mode == "AGGREGATE":
-        subtitle = "агрегат по всем сидам"
-    else:
-        subtitle = None
+    subtitle = f"Seed {seed}" if mode == "SEED" and seed is not None else None
 
     ax.set_title(
         TITLE + (f"\n({subtitle})" if subtitle else ""),
