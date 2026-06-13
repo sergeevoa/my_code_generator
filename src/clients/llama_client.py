@@ -1,7 +1,15 @@
 import json
+import httpx
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat import ChatCompletionChunk
 from typing import Any, AsyncGenerator, Dict, List, Optional, cast
+
+# Connect timeout stays short (fail fast if server is down).
+# Read timeout is disabled: during long prefills on large contexts the server
+# sends no SSE chunks for hundreds of seconds, which would fire a read timeout
+# and cancel the task. The asyncio.wait_for wall-clock limit in the benchmark
+# is the actual guard against runaway requests.
+_DEFAULT_TIMEOUT = httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0)
 
 
 class LlamaClient:
@@ -14,7 +22,7 @@ class LlamaClient:
         model: str,
         base_url: str = "http://localhost:8080",
         api_key: str = "not-needed",
-        default_timeout: Optional[float] = 300.0,
+        default_timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
     ):
         self.model = model
         self.default_timeout = default_timeout
