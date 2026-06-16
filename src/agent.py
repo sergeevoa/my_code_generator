@@ -145,9 +145,10 @@ async def run_agent_async(
     if conversation_history is None:
         conversation_history = []
 
-    from memory import project_memory_exists, create_project_memory
+    from memory import project_memory_exists, create_project_memory, cleanup_old_sessions
     if not project_memory_exists(working_dir):
         create_project_memory(working_dir)
+    cleanup_old_sessions()
 
     system_prompt = build_system_prompt(working_dir)
     ensure_system_in_history(conversation_history, system_prompt)
