@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Plot convergence curves from a QuixBugs summary JSON file.
+Plot convergence curves from a summary JSON file.
 
 Usage:
-    python plot_convergence.py quixbugs_seed7_summary.json
-    python plot_convergence.py quixbugs_results/quixbugs_seed7_summary.json
-    python plot_convergence.py quixbugs_seed7_summary          # .json optional
+    python plot_convergence.py path/to/summary.json
+    python plot_convergence.py C:/results/experiment_summary.json
 """
 
 import argparse
@@ -19,8 +18,6 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-
-RESULTS_DIR = Path(__file__).parent / "quixbugs_results"
 
 TITLE   = "Кривые сходимости агентов"
 
@@ -37,16 +34,12 @@ MARKER_B1 = "s"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve_path(arg: str) -> Path:
-    """Return an existing Path for *arg*, searching in RESULTS_DIR if needed."""
-    for candidate in (
-        Path(arg),
-        RESULTS_DIR / arg,
-        RESULTS_DIR / (arg + ".json"),
-    ):
-        if candidate.exists():
-            return candidate.resolve()
-    print(f"Файл не найден: {arg}", file=sys.stderr)
-    sys.exit(1)
+    """Return an existing Path for *arg*."""
+    p = Path(arg).resolve()
+    if not p.exists():
+        print(f"Файл не найден: {arg}", file=sys.stderr)
+        sys.exit(1)
+    return p
 
 
 def _extract_curve(curve: dict) -> tuple[list[int], list[float], list[float] | None]:
@@ -179,8 +172,7 @@ def main() -> None:
     )
     parser.add_argument(
         "summary_file",
-        help="Имя файла или путь к summary JSON "
-             "(ищется в quixbugs_results/ если путь не абсолютный)",
+        help="Путь к summary JSON-файлу",
     )
     args = parser.parse_args()
 
@@ -189,7 +181,7 @@ def main() -> None:
     with open(src, encoding="utf-8") as fh:
         summary = json.load(fh)
 
-    out = RESULTS_DIR / (src.stem + "_convergence.png")
+    out = src.parent / (src.stem + "_convergence.png")
     build_plot(summary, out)
 
 
