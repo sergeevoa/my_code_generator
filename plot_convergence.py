@@ -88,8 +88,9 @@ def _annotate(ax, xs, ys, color: str, offset_y: int) -> None:
 
 
 def build_plot(summary: dict, out_path: Path) -> None:
-    b0_curve_raw = summary.get("B0", {}).get("convergence_curve", {})
-    b1_curve_raw = summary.get("B1", {}).get("convergence_curve", {})
+    data = summary.get("aggregate", summary)
+    b0_curve_raw = data.get("B0", {}).get("convergence_curve", {})
+    b1_curve_raw = data.get("B1", {}).get("convergence_curve", {})
 
     if not b0_curve_raw or not b1_curve_raw:
         print("В файле нет данных convergence_curve для B0 и/или B1.", file=sys.stderr)
@@ -143,7 +144,13 @@ def build_plot(summary: dict, out_path: Path) -> None:
     # ── Title ───────────────────────────────────────────────────────────────
     mode = summary.get("mode", "")
     seed = summary.get("seed")
-    subtitle = f"Seed {seed}" if mode == "SEED" and seed is not None else None
+    if mode == "SEED" and seed is not None:
+        subtitle = f"Seed {seed}"
+    elif mode == "FULL":
+        seeds = summary.get("seeds", [])
+        subtitle = f"Среднее по {len(seeds)} сидам" if seeds else "Агрегированные данные"
+    else:
+        subtitle = None
 
     ax.set_title(
         TITLE + (f"\n({subtitle})" if subtitle else ""),
